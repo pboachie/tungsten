@@ -24,7 +24,8 @@ Tree rules:
     in runtimes/ (and a copy of it in a runtime package directory, for npm
     packaging); Markdown directly in .github/ (pull request template and the
     like); .github/ISSUE_TEMPLATE/*.md and *.yml; examples/README.md,
-    examples/<name>/README.md, and README.md in the explicitly listed runtime packages.
+    examples/<name>/README.md, actions/<name>/README.md (the reusable GitHub
+    Actions), and README.md in the explicitly listed runtime packages.
     Everything else with a documentation extension or name stays forbidden,
     wherever it is (docs/CONTRIBUTING.md, CHANGELOG.txt, assets/notes.md);
   - the root assets/ directory holds images only (.svg and .png); examples/ holds code (and the
@@ -39,7 +40,7 @@ Tree rules:
   - the SDK runtimes of LANGUAGE_ROOTS: Java (runtimes/java/: .java,
     pom.xml), C# (runtimes/csharp/: .cs, .csproj, Directory.Build.props),
     F# (runtimes/fsharp/: .fs, .fsi, .fsproj), Kotlin (runtimes/kotlin/:
-    .kt, .kts), Swift (runtimes/swift/: .swift, Package.swift,
+    .kt, .kts, pom.xml), Swift (runtimes/swift/: .swift, Package.swift,
     Package.resolved), PHP (runtimes/php/: .php,
     composer.json, phpstan.neon), Ruby (runtimes/ruby/: .rb, .gemspec,
     Gemfile) and Dart (runtimes/dart/: .dart, pubspec.yaml,
@@ -55,6 +56,10 @@ Tree rules:
     files (*Test.java, *Tests.java, *Test.kt, *Tests.cs, *Tests.fs,
     *Tests.swift, *Test.php, *_test.rb, *_spec.rb, *_test.dart) and test directories (any
     case, `Tests/` included, and spec/ under runtimes/ruby/) are refused.
+  - one CI-only exception, .github/scripts/JavaTrustProbe.java, may inspect
+    and qualify job-local JSSE trust. It must be an ordinary UTF-8 text file
+    with the AGPL-3.0-only header; it is not a shipped runtime source. All
+    other Java sources outside runtimes/java/ remain forbidden;
   - CHANGELOG.md (the source of the GitHub Release notes) keeps, inside one
     release section (`## [X.Y.Z]` or `## [Unreleased]`), one heading of each
     kind and one bullet per change (no repeated bullet text), and every
@@ -119,12 +124,13 @@ DOC_NAME = re.compile(
 # documentation, and a documentation directory is refused even around these.
 ALLOWED_DOCS = re.compile(
     r"^(?:README\.md|LICENSE|CONTRIBUTING\.md|SECURITY\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md"
-    r"|runtimes/LICENSE|runtimes/[^/]+/LICENSE|runtimes/rust/(?:runtime|cli-kit)/LICENSE"
-    r"|runtimes/(?:ts|mcp|webmcp|python|rust|go|java|csharp|ruby|kotlin|fsharp|dart)/README\.md"
+    r"|runtimes/LICENSE|runtimes/[^/]+/LICENSE|runtimes/kotlin/coroutines/LICENSE|runtimes/kotlin/coroutines/README\.md|runtimes/rust/(?:runtime|cli-kit)/LICENSE"
+    r"|runtimes/(?:ts|mcp|mcp-python|webmcp|python|rust|go|java|csharp|ruby|kotlin|fsharp|dart)/README\.md"
     r"|runtimes/rust/(?:runtime|cli-kit)/README\.md"
     r"|\.github/[^/]+\.md"
     r"|\.github/ISSUE_TEMPLATE/[^/]+\.(?:md|ya?ml)"
-    r"|examples/README\.md|examples/[^/]+/README\.md)$"
+    r"|examples/README\.md|examples/[^/]+/README\.md"
+    r"|actions/[^/]+/README\.md)$"
 )
 ASSET_EXTENSIONS = {".svg", ".png"}
 
@@ -145,12 +151,14 @@ LANGUAGE_ROOTS = (
     ("runtimes/java/", "Java", {".java"}, {"pom.xml"}, set()),
     ("runtimes/csharp/", "C#", {".cs"}, {"Directory.Build.props"}, {".csproj"}),
     ("runtimes/fsharp/", "F#", {".fs", ".fsi"}, set(), {".fsproj"}),
-    ("runtimes/kotlin/", "Kotlin", {".kt", ".kts"}, set(), set()),
+    ("runtimes/kotlin/", "Kotlin", {".kt", ".kts"}, {"pom.xml"}, set()),
     ("runtimes/swift/", "Swift", {".swift"}, {"Package.swift", "Package.resolved"}, set()),
     ("runtimes/php/", "PHP", {".php"}, {"composer.json", "phpstan.neon"}, set()),
     ("runtimes/ruby/", "Ruby", {".rb"}, {"Gemfile"}, {".gemspec"}),
     ("runtimes/dart/", "Dart", {".dart"}, {"pubspec.yaml", "analysis_options.yaml"}, set()),
 )
+# Exact CI-tooling exception only; never broaden this to a directory or suffix.
+CI_JAVA_PROBE = ".github/scripts/JavaTrustProbe.java"
 SLASH_HEADER_SOURCES = {".java", ".cs", ".fs", ".fsi", ".kt", ".kts", ".swift", ".dart"}
 HASH_HEADER_FILES = {"Gemfile", "pubspec.yaml", "analysis_options.yaml", "phpstan.neon"}
 HASH_HEADER_SOURCES = {".rb", ".gemspec"}
@@ -212,16 +220,20 @@ def language_of(path: str) -> tuple[str, str] | None:
     """(root, language) of an SDK runtime source or manifest, by its name."""
     name = PurePosixPath(path).name
     suffix = PurePosixPath(name).suffix.lower()
-    for root, language, sources, names, manifest_suffixes in LANGUAGE_ROOTS:
-        if suffix in sources or name in names or suffix in manifest_suffixes:
-            return root, language
-    return None
+    owners = [
+        (root, language)
+        for root, language, sources, names, manifest_suffixes in LANGUAGE_ROOTS
+        if suffix in sources or name in names or suffix in manifest_suffixes
+    ]
+    # A manifest name shared by two runtimes (pom.xml: Java and Kotlin) belongs
+    # to the runtime whose directory holds it.
+    return next((o for o in owners if path.startswith(o[0])), owners[0] if owners else None)
 
 
 def language_violations(path: str) -> list[str]:
     found = []
     owner = language_of(path)
-    if owner and not path.startswith(owner[0]):
+    if owner and not path.startswith(owner[0]) and path != CI_JAVA_PROBE:
         found.append(f"{owner[1]} source or manifest outside {owner[0]}")
     parts = PurePosixPath(path).parts
     if path.startswith("runtimes/ruby/") and any(p.lower() == "spec" for p in parts[:-1]):
@@ -275,7 +287,7 @@ def path_violations(path: str) -> list[str]:
         found.append(
             "documentation file (only the community files are allowed: README.md, LICENSE, CONTRIBUTING.md,"
             " SECURITY.md, CODE_OF_CONDUCT.md and CHANGELOG.md at the root, Markdown in .github/ and"
-            " .github/ISSUE_TEMPLATE/, examples/README.md, examples/<name>/README.md, npm runtime README.md; docs live in the private repository)"
+            " .github/ISSUE_TEMPLATE/, examples/README.md, examples/<name>/README.md, actions/<name>/README.md, npm runtime README.md; docs live in the private repository)"
         )
     if (suffix == ".go" or name in GO_MODULE_FILES) and not path.startswith(GO_ROOTS):
         found.append("Go source or module file outside runtimes/go/ and emitters/go/")
@@ -327,6 +339,8 @@ def manifest_violations(path: str, text: str, paths: set[str]) -> list[str]:
 
 def content_violations(path: str, text: str, paths: set[str]) -> list[str]:
     found = []
+    if path == CI_JAVA_PROBE and not has_header(text, AGPL_HEADER):
+        found.append(f"CI Java probe without the licence header '{AGPL_HEADER}'")
     if path == CHANGELOG_PATH:
         found += changelog_violations(text)
         if PRIVATE_REFERENCE.search(text):
@@ -448,10 +462,19 @@ def check_tree(repo: Path, ref: str) -> list[str]:
     findings = []
     for mode, oid, path in files:
         issues = path_violations(path)
+        if path == CI_JAVA_PROBE and mode != "100644":
+            issues.append("CI Java probe must be an ordinary non-executable file")
         if mode == "160000":
             issues.append("submodule (the public repository vendors nothing)")
         elif mode != "120000":
             data = blobs[oid]
+            if path == CI_JAVA_PROBE:
+                try:
+                    data.decode("utf-8", "strict")
+                    if b"\0" in data:
+                        raise ValueError("binary probe")
+                except (UnicodeDecodeError, ValueError):
+                    issues.append("CI Java probe must be UTF-8 text")
             if b"\0" not in data:
                 issues += content_violations(path, data.decode("utf-8", "replace"), paths)
         findings += [f"{path}: {issue}" for issue in issues]

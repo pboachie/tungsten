@@ -29,7 +29,7 @@ responsible for authorization and server-side idempotency.
 Select `FileIdempotencyStore` through the client's idempotency-store option to
 reuse keys after a restart and coordinate automatic key allocation across
 processes. The version-1 JSON file and `<path>.lock` owner lease interoperate
-with the TypeScript, Python, Go, Rust, Java, C# and Ruby stores.
+with the TypeScript, Python, Go, Rust, Java, C#, Ruby and Dart stores.
 
 ```java
 ClientOptions options = ClientOptions.builder()
@@ -53,16 +53,99 @@ token immediately before commit and removes only its own lease. Use a filesystem
 that supports exclusive creation and atomic rename; this is not a distributed
 transaction service. Losing this file can cause a new key for a previous intent.
 
+## Credential transport
+
+Credentials require HTTPS by default, including OAuth client-credentials, code
+exchange and refresh endpoints. Non-loopback HTTP returns `AUTH_FAILED` before
+sending credentials. Migrate authenticated HTTP services to HTTPS, or explicitly
+opt in with `ClientOptions.builder().allowInsecureHttp(true).build()` for intentional insecure transport.
+This permits cleartext credentials; enable it only for a trusted environment.
+
+The local-development exception covers `localhost` (also with a trailing dot),
+literal IPv4 `127/8`, and IPv6 `::1`. Subdomains, unspecified addresses and
+IPv4-mapped IPv6 addresses require the explicit override. DNS resolution does not
+grant an exception. Anonymous HTTP requests remain supported.
+
+## Opening authorization URLs safely
+
+OAuth authorization helpers return URL data; they do not open a browser. Treat
+provider endpoints and returned URLs as untrusted input. Apply your application's
+URL policy and use a browser or native URL API that treats the complete target as
+literal data. Never interpolate the URL into PowerShell, CMD, POSIX shell or other
+command source, and do not pass it to an opener that does so internally.
+
+Scheme validation alone does not prevent command injection: an ordinary HTTPS
+URL can contain shell expansion characters. Managed OAuth endpoint checks are
+protocol validation, not shell escaping. Explicit low-level compatibility helpers
+retain application-owned URL policy, including custom schemes; their results
+need the same safe integration boundary. Do not silently route a rejected URL or
+failed browser launch through a shell fallback.
+
+These boundaries do not qualify third-party openers, custom integrations or real
+provider/listener behavior. Qualify the application's complete launch path on
+each supported platform, including Windows and WSL.
+
 ## Limits
 
-Set `ClientOptions.Builder.maxResponseBytes` to opt into an ordinary-response byte cap;
-a call option with the same name overrides it. The value must be a positive
-safe integer (at most 9007199254740991); unset keeps the existing unbounded
-behavior. Content-Length is checked before reading, and actual bytes are
-counted even without that header. Overflow closes the body and returns
-`UNEXPECTED_RESPONSE` with code `RESPONSE_TOO_LARGE` and `retryable: never`.
-A mutation may have taken effect: inspect API state before retrying. The cap
-does not limit a successful SSE stream; use its event and collection limits.
+Multipart bodies: a field whose OpenAPI `encoding` entry declares a
+`contentType` is sent with that media type (the first entry without
+wildcards); a file part's own media type wins. The entry's `headers` are not
+sent (the TypeScript, Python and Rust runtimes send those with a fixed
+value), and neither is positional or nested multipart encoding. Unreleased
+0.2.0 only.
+
+The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
+not run by the client: configure the scheme with an access token obtained
+through it.
+
+A tagged union with an OpenAPI 3.2 discriminator `defaultMapping` decodes an
+object whose tag is missing, not a string or claimed by no other variant as the
+default variant; its own field types then apply. Without `defaultMapping`
+such an object is refused. A value that is not an object is always refused.
+
+In unreleased 0.2.0, `deadline(Duration)` (on `ClientOptions.Builder` or `CallOptions.Builder`)
+sets a total deadline for one logical call, separate from the per-attempt `timeout`. It is
+measured on `System.nanoTime` and covers authentication, idempotency-key reservation, every
+attempt (each one's `timeout` is cut to the time left), retry waits, response bodies and
+verification; for `pages`, `poll` and `runMacro` it covers the whole traversal, poll or macro,
+and nested work cannot restart it. No attempt starts after it expires: the call fails with code
+`DEADLINE_EXCEEDED`, and a mutation that was already sent reports `OUTCOME_UNKNOWN`, never a
+blind replay. A retry wait that would end after the deadline returns the last failure at once.
+For `stream` it bounds connecting and each reconnect, never an open stream (use
+`idleTimeout`). Calls are synchronous, so blocking work the runtime cannot interrupt is checked
+when it returns rather than cut short: an OAuth token request the calling thread itself performs
+(shared refreshes and client-credentials fetches are never cancelled for their other waiters,
+but a waiting caller stops at its deadline) and a custom `IdempotencyStore`. Such work stays
+bounded by its own timeout. Default: no total deadline.
+
+In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
+Set `ClientOptions.Builder.maxResponseBytes` to choose a finite client cap; the call option with the same
+native name overrides it. Omitted/null values inherit the default or client cap,
+not an unlimited mode. Values must be positive safe integers (at most
+9007199254740991), validated before authentication, storage and preview effects.
+This covers ordinary success/error bodies, server previews, each page and each
+verification read. A page cap does not bound collecting many pages.
+
+Content-Length can reject an oversized representation early; actual delivered
+bytes are counted even without it. HEAD/204/205/304 metadata alone does not
+consume the budget, but any body bytes a transport delivers are still counted.
+Overflow closes the owned body and returns `UNEXPECTED_RESPONSE`, code
+`RESPONSE_TOO_LARGE`, with `retryable: never`. A mutation may have taken effect:
+inspect API state before retrying. The cap is separate from OAuth token-response
+and successful SSE event/collection budgets.
+
+The default transport does not decompress encoded bodies; use identity encoding. Encoded delivery does not establish a decoded-content limit.
+The cap limits accepted body bytes; parsers, copies and HTTP decoders can allocate
+more. Custom transports must stream nonempty bodies and honor cancellation;
+their own buffering, decoding and settlement behavior need separate qualification.
+
+Schema `min_length`/`max_length` count Unicode code points (a surrogate pair is one, a lone
+surrogate is one), as JSON Schema does. A schema `pattern` is a `java.util.regex` expression. One
+Java cannot compile is accepted and reported through `onDiagnostic` as `PATTERN_UNCHECKED` (path,
+pattern and reason, never the value; once per path and pattern per call). So is a value longer than
+65,536 characters, a match that runs over one second, and a match that overflows the stack
+(`java.util.regex` recurses per repetition of some groups); each of those values is accepted
+unchecked. `Schema` validation called directly stays silent. Kotlin delegates to this runtime.
 
 The Java API is synchronous. There is no async API, proxy configuration or
 pluggable HTTP transport. Preview and
@@ -72,6 +155,85 @@ No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
 stored credentials and avoid logging them. Registry publication and package
 availability are separate from building this source checkout.
+
+## Managed browser OAuth
+
+`client.oauth("scheme")` uses synchronous managed authorization attempts. Configure
+`AuthCredential.parts` with `flow: "authorizationCode"`, `client_id`, and optional
+`client_secret` and `redirect_uri`. Qualify the provider's S256 support and either
+its issuer response parameter or a distinct redirect/listener deployment that
+prevents issuer mix-up. A state value alone does not establish issuer identity.
+
+```java
+OAuthFlow oauth = client.oauth("code");
+var attempt = oauth.authorizationUrl(OAuthFlow.AuthorizationParams.builder()
+    .sessionBinding(owningListenerBinding)
+    .s256Supported(true) // qualify the provider before enabling this
+    .issuerDefense(OAuthFlow.IssuerDefense.issuerResponse("https://issuer.example"))
+    .build()).unwrap();
+// Retain the handle with this owning listener; open attempt.url() in the browser.
+var tokenInfo = oauth.exchangeCode(new OAuthFlow.ExchangeParams(
+    attempt.attemptHandle(), fullCallbackUrl, owningListenerBinding));
+```
+
+`IssuerDefense.distinctRedirect(qualification)` is the explicit alternative when
+an application has qualified an issuer-exclusive redirect/listener. Bind each
+attempt to its owning application session or listener using an unpredictable
+binding that other sessions cannot supply. The runtime generates and retains
+S256 verifier/state, captures the client, endpoints, redirect, scopes, resource,
+audience and account context, and accepts the full callback once. It rejects
+duplicate query fields, malformed UTF-8/percent encoding, fragments, redirect or
+issuer mismatches, and protected endpoint/extra query parameters before sending
+a code. Invalid callbacks do not consume a valid attempt; denial and an accepted
+exchange claim do. An ambiguous exchange requires a new attempt.
+
+Each client admits at most 32 pending/claimed attempts and 32 token-read/refresh
+owners or waiters. Attempts expire after ten monotonic minutes. Captured inputs
+share a 32 KiB UTF-8 budget, with at most 64 scopes and 64 extra fields; callbacks
+are at most 16 KiB with at most 64 fields. Refresh configuration/client captures
+use the same input budget; each stored token string is bounded separately by the
+configured token-response byte cap (up to twice that cap together), so larger
+accepted and retained tokens remain refreshable.
+Endpoints reject invalid Unicode,
+ASCII whitespace/control text, fragments and protected query fields before URI parsing.
+`cancelAuthorization(handle, binding)` invalidates one attempt; `logout()` fences
+local pending work before removing credentials. Neither revokes provider tokens.
+Claimed canceled/expired work retains admission until physical transport/store
+work settles. One lazy daemon expiry scheduler serves clients, removes canceled
+tasks, and holds only weak client/attempt references; applications do not dispose
+it. No per-attempt thread is created for expiry.
+
+The default `TokenStore.Memory` implements `TokenStore.Fenced`. Managed begin and
+refresh fail closed for legacy custom stores. A fenced adapter must evaluate its
+predicate exactly once at the final serialized write/removal, with no speculative
+checks, retries or wait gap. Predicates change the session mutation epoch; return
+true only after committing. Failed commits must preserve the previous token and
+may conservatively invalidate older refreshes. Logout generation is separate
+from the mutation epoch, so distinct pending logins can finish independently;
+the last successful login mutation selects credentials. Older refresh success or
+rejection cannot overwrite/remove a newer managed selection, even with identical
+token strings. Direct store writes and the low-level methods bypass these session
+guarantees. Shared persistent multi-account adapters require their own partitioning
+and qualification; per-client memory controls do not qualify those adapters.
+
+Code/refresh responses accept at most 64 KiB by default. Set
+`ClientOptions.builder().maxOAuthTokenResponseBytes(positiveSafeInteger)` for a
+supported override (maximum 2^53-1). This limits accepted response bytes, not peak
+heap, decoder allocation or external store buffering. Java charges admission
+before custom token reads, retains it through actual settlement, and fences
+dispatch and final managed store predicates/results with the configured monotonic
+token-job timeout. A custom socket/store can ignore cancellation and keep the
+synchronous call blocked; it cannot obtain a late managed commit. A store that
+committed before the deadline and then held its return can cause a failed result
+with a committed token; this is not a rollback guarantee. Ordinary requests and
+client-credentials transport semantics are separate from this OAuth-owned fence.
+
+Migrate primitive callers deliberately to `lowLevelAuthorizationUrl(...)` and
+`lowLevelExchangeCode(...)` only when the application owns PKCE, state, issuer,
+callback validation, one-shot consumption and store races. `pkce()` remains an
+explicit utility; managed begin creates its own verifier. There are no implicit
+primitive aliases under the managed method names. Keep handles, bindings,
+authorization URLs, callbacks and tokens out of application logs.
 
 ## License
 

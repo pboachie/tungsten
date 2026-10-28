@@ -48,6 +48,7 @@ public final class ClientOptions {
     final Map<String, AuthCredential> auth;
     final TokenStore tokenStore;
     final Duration timeout;
+    final Duration deadline;
     final RetryOptions retries;
     final IdempotencyStore idempotencyStore;
     final List<Middleware> middleware;
@@ -56,23 +57,27 @@ public final class ClientOptions {
     final Map<String, String> headers;
     final int maxEventBytes;
     final Long maxResponseBytes;
+    final long maxOAuthTokenResponseBytes;
     final int maxCollectBytes;
     final Duration maxCollectTime;
     final int maxReconnects;
     final Duration reconnectMax;
     final Duration idleTimeout;
     final byte[] confirmationKey;
+    final boolean allowInsecureHttp;
     final SSLSocketFactory sslSocketFactory;
     final LongSupplier clock;
     final DoubleSupplier random;
     final RuntimeIdentity identity;
 
     private ClientOptions(Builder b) {
+        allowInsecureHttp = b.allowInsecureHttp;
         redirects = b.redirects;
         baseUrl = b.baseUrl;
         auth = Collections.unmodifiableMap(new LinkedHashMap<>(b.auth));
         tokenStore = b.tokenStore != null ? b.tokenStore : new TokenStore.Memory();
         timeout = positive(b.timeout, DEFAULT_TIMEOUT);
+        deadline = Deadline.positive(b.deadline) ? b.deadline : null;
         retries = b.retries != null ? b.retries : RetryOptions.none();
         idempotencyStore = b.idempotencyStore != null ? b.idempotencyStore : new IdempotencyStore.Memory();
         middleware = Collections.unmodifiableList(new ArrayList<>(b.middleware));
@@ -81,6 +86,7 @@ public final class ClientOptions {
         headers = Collections.unmodifiableMap(new LinkedHashMap<>(b.headers));
         maxEventBytes = b.maxEventBytes > 0 ? b.maxEventBytes : DEFAULT_MAX_EVENT_BYTES;
         maxResponseBytes = b.maxResponseBytes;
+        maxOAuthTokenResponseBytes = b.maxOAuthTokenResponseBytes == null ? 65536L : b.maxOAuthTokenResponseBytes;
         maxCollectBytes = b.maxCollectBytes > 0 ? b.maxCollectBytes : DEFAULT_MAX_COLLECT_BYTES;
         maxCollectTime = positive(b.maxCollectTime, DEFAULT_MAX_COLLECT_TIME);
         maxReconnects = b.maxReconnects == null ? DEFAULT_MAX_RECONNECTS : Math.min(Math.max(b.maxReconnects, 0), 1000);
@@ -88,7 +94,10 @@ public final class ClientOptions {
         idleTimeout = b.idleTimeout != null && !b.idleTimeout.isNegative() && !b.idleTimeout.isZero()
                 ? (b.idleTimeout.toMillis() < 1 ? Duration.ofMillis(1) : b.idleTimeout)
                 : null;
-        confirmationKey = b.confirmationKey != null && b.confirmationKey.length > 0
+        if (b.confirmationKey != null && b.confirmationKey.length < 32) {
+            throw new IllegalArgumentException("confirmationKey must contain at least 32 bytes; omit it to generate a random key");
+        }
+        confirmationKey = b.confirmationKey != null
                 ? b.confirmationKey.clone()
                 : Text.randomBytes(32);
         sslSocketFactory = b.sslSocketFactory;
@@ -98,11 +107,13 @@ public final class ClientOptions {
     }
 
     private ClientOptions(ClientOptions o, RuntimeIdentity identity) {
+        allowInsecureHttp = o.allowInsecureHttp;
         redirects = o.redirects;
         baseUrl = o.baseUrl;
         auth = o.auth;
         tokenStore = o.tokenStore;
         timeout = o.timeout;
+        deadline = o.deadline;
         retries = o.retries;
         idempotencyStore = o.idempotencyStore;
         middleware = o.middleware;
@@ -111,6 +122,7 @@ public final class ClientOptions {
         headers = o.headers;
         maxEventBytes = o.maxEventBytes;
         maxResponseBytes = o.maxResponseBytes;
+        maxOAuthTokenResponseBytes = o.maxOAuthTokenResponseBytes;
         maxCollectBytes = o.maxCollectBytes;
         maxCollectTime = o.maxCollectTime;
         maxReconnects = o.maxReconnects;
@@ -153,6 +165,7 @@ public final class ClientOptions {
         private final Map<String, AuthCredential> auth = new LinkedHashMap<>();
         private TokenStore tokenStore;
         private Duration timeout;
+        private Duration deadline;
         private RetryOptions retries;
         private IdempotencyStore idempotencyStore;
         private final List<Middleware> middleware = new ArrayList<>();
@@ -161,12 +174,20 @@ public final class ClientOptions {
         private final Map<String, String> headers = new LinkedHashMap<>();
         private int maxEventBytes;
         private Long maxResponseBytes;
+        private Long maxOAuthTokenResponseBytes;
         private int maxCollectBytes;
         private Duration maxCollectTime;
         private Integer maxReconnects;
         private Duration reconnectMax;
         private Duration idleTimeout;
         private byte[] confirmationKey;
+        private boolean allowInsecureHttp;
+
+        /** Allows credentials over non-loopback HTTP, including OAuth. Default false; localhost, 127/8 and ::1 remain usable. */
+        public Builder allowInsecureHttp(boolean value) {
+            allowInsecureHttp = value;
+            return this;
+        }
         private SSLSocketFactory sslSocketFactory;
         private LongSupplier clock;
         private DoubleSupplier random;
@@ -205,6 +226,15 @@ public final class ClientOptions {
         /** The per-attempt timeout (30 s by default). */
         public Builder timeout(Duration value) {
             timeout = value;
+            return this;
+        }
+
+        /**
+         * The total deadline of one logical call, see {@link CallOptions.Builder#deadline}. Null,
+         * zero or negative (the default): none, only the per-attempt timeout.
+         */
+        public Builder deadline(Duration value) {
+            deadline = value;
             return this;
         }
 
@@ -250,7 +280,7 @@ public final class ClientOptions {
             return this;
         }
 
-        /** Maximum ordinary response bytes; unset means unbounded. Must be a positive safe integer. */
+        /** Maximum ordinary response bytes; null/unset inherits 4 MiB. Must be a positive safe integer. */
         public Builder maxResponseBytes(long value) {
             return maxResponseBytes(Long.valueOf(value));
         }
@@ -259,6 +289,17 @@ public final class ClientOptions {
         public Builder maxResponseBytes(Long value) {
             maxResponseBytes = value;
             return this;
+        }
+
+        /** Separate code/refresh response cap; null inherits 64 KiB. Must be a positive safe integer. */
+        public Builder maxOAuthTokenResponseBytes(Long value) {
+            maxOAuthTokenResponseBytes = value;
+            return this;
+        }
+
+        /** Separate code/refresh response cap, in accepted response bytes. */
+        public Builder maxOAuthTokenResponseBytes(long value) {
+            return maxOAuthTokenResponseBytes(Long.valueOf(value));
         }
 
         /** The most JSON a stream collection keeps (4 MiB by default). */
@@ -304,7 +345,10 @@ public final class ClientOptions {
             return this;
         }
 
-        /** The key confirmation tokens are signed with; random per client by default. */
+        /**
+         * The key confirmation tokens are signed with: at least 32 cryptographically
+         * random bytes, copied. Shorter keys fail build(); null generates a key.
+         */
         public Builder confirmationKey(byte[] value) {
             confirmationKey = value == null ? null : value.clone();
             return this;

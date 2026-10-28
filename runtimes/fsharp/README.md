@@ -25,7 +25,52 @@ Calls return a typed result or a diagnostic envelope describing recovery;
 unknown outcomes never justify blindly repeating a mutation. The API remains
 responsible for authorization and server-side idempotency.
 
+## Opening authorization URLs safely
+
+OAuth helpers return URL data and never launch a browser. Follow the
+[csharp runtime's safe URL integration guidance](../csharp/README.md#opening-authorization-urls-safely):
+validate for the application, use a literal-data browser API, and never interpolate
+URLs into shell source or use an unsafe opener or shell fallback. HTTP(S) scheme
+validation alone does not prevent command injection, including on Windows/WSL.
+Compatibility helpers retain application-owned custom-scheme policy.
+
 ## Limits
+
+Multipart bodies: a field whose OpenAPI `encoding` entry declares a
+`contentType` is sent with that media type (the first entry without
+wildcards); a file part's own media type wins. The entry's `headers` are not
+sent (the TypeScript, Python and Rust runtimes send those with a fixed
+value), and neither is positional or nested multipart encoding. Unreleased
+0.2.0 only.
+
+The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
+not run by the client: configure the scheme with an access token obtained
+through it.
+
+A tagged union with an OpenAPI 3.2 discriminator `defaultMapping` decodes an
+object whose tag is missing, not a string or claimed by no other variant as the
+default case (read with `Codec.tagOption`); its own field types then apply.
+Without `defaultMapping` such an object is refused. A value that is not an
+object is always refused.
+
+In unreleased 0.2.0, the total operation deadline is the .NET runtime's: set `Deadline` (a
+`TimeSpan`) on `ClientOptions` or per call with `CallOptions(Deadline = TimeSpan.FromSeconds 5.0)`.
+Unlike the per-attempt `Timeout`, it bounds one logical call across authentication, idempotency-key
+reservation, retries and backoff, response bodies and verification, and a whole traversal, poll or
+macro, on a monotonic clock. No attempt starts after it expires (`Code` `DEADLINE_EXCEEDED`); a
+mutation already sent reports `OUTCOME_UNKNOWN`. It is independent of the `?cancellationToken` of a
+generated method (and of the token an `Async` workflow carries), which still cancels at once. The
+limits listed in the C# runtime's README apply. Default: no total deadline.
+
+OAuth helpers returned by generated F# clients are the C# runtime's `OAuthFlow`.
+In unreleased 0.2.0, `AuthorizationUrl` returns a managed attempt; complete it with
+its handle, full callback URL and owning session/listener binding. Explicitly
+qualify S256 support and issuer defense. Cancellation, local logout, fenced
+stores, mutation epochs and code/refresh response limits come from that core;
+see the [C# browser OAuth contract](../csharp/README.md#browser-oauth-authorization).
+The explicitly named low-level helpers are application-owned escapes. This
+delegation does not establish generated or installed F# consumer qualification;
+both runtime projects still require .NET 10 and matching package versions.
 
 Transport and safety behavior come from the C# runtime. For durable automatic
 keys, configure C#'s `FileIdempotencyStore` through the shared client options;
@@ -33,10 +78,44 @@ see the [C# store and lease limits](../csharp/README.md#durable-automatic-keys).
 Applications own the storage location and lifecycle. Package versions must
 match the generated consumer's dependencies.
 
+Schema `pattern` values are ECMAScript expressions; the C# runtime rewrites them for .NET and reports a pattern
+it cannot check as a `PATTERN_UNCHECKED` diagnostic through `ClientOptions.OnDiagnostic`; see
+[Schema patterns](../csharp/README.md#schema-patterns) for the remaining differences.
+
+Scope of the F# target in 0.2.0 (decided, not planned work):
+
+- **Task API only.** Calls return `Task<Result<_, Diagnostic>>` and pages and streams are
+  `IAsyncEnumerable`. There is no `Async<_>` surface; from `async { }` use `Async.AwaitTask`.
+- **net10.0 only.** `Tungsten.Runtime`, `Tungsten.Runtime.FSharp` and generated F# projects target net10.0;
+  lowering the target (net8.0/net9.0) is out of scope and unqualified.
+- **No Fantomas formatting.** Generated sources are deterministic but not Fantomas-formatted, and no check
+  runs them through it. Run Fantomas in your own project if you want that style.
+- **No Fable or JavaScript target.** The runtime builds on `HttpClient`, `System.Text.Json` and the .NET
+  runtime's file stores; compiling with Fable is untested and unsupported.
+- Inherited from the generator and the C# runtime: OpenID Connect is sent as a bearer token without
+  discovery, and the F# target emits no CLI or MCP server (other targets emit those from the same
+  description). The `JsonNode` fallbacks that remain are listed below.
+
+Since 0.2.0 an `allOf` that cannot be merged into one record is a record with
+one typed field per member, an enum of mixed JSON types is a union of its known
+JSON values plus `Unknown of JsonNode`, and an operation whose success bodies
+differ by exact status returns a union of its answers (read `Status`). Still
+`JsonNode`: an `allOf` without members (TG1081, a warning) and a success whose
+bodies differ and are not one JSON body (or none) per exact status, such as a
+range or `default` status or a text or binary body among them. A discriminated
+union with a variant that has no tag value tries its variants in order (TG1085),
+and a macro outside the canonical form is left out (TG1082).
+Stream and `collect` limits, the 1 MiB event cap, the 4 MiB / 60 s collect
+budget and HTTP/1.1 requests are the C# runtime's; see its
+[Limits](../csharp/README.md#limits).
+
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
-stored credentials and avoid logging them. Registry publication and package
-availability are separate from building this source checkout.
+stored credentials and avoid logging them.
+
+Availability: `Tungsten.Runtime.FSharp` is not published on NuGet. Build it from
+source as in Install from source. It depends on `Tungsten.Runtime`, which is on
+NuGet at 0.1.3, but the 0.2.0 behavior described here needs the matching source.
 
 ## License
 

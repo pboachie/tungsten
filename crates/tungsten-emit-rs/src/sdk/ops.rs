@@ -583,7 +583,7 @@ pub(crate) fn write_request(
     let intro = format!(
         "Arguments of `{}` (`{} {}`).",
         op.id.0,
-        method_str(op.method),
+        op.wire_method(),
         op.path.raw
     );
     let check = request_check_name(info);
@@ -791,21 +791,8 @@ pub(crate) fn fn_sig(w: &mut Writer, indent: usize, head: &str, params: &[String
     }
 }
 
-pub(crate) fn method_str(m: HttpMethod) -> &'static str {
-    match m {
-        HttpMethod::Get => "GET",
-        HttpMethod::Put => "PUT",
-        HttpMethod::Post => "POST",
-        HttpMethod::Delete => "DELETE",
-        HttpMethod::Options => "OPTIONS",
-        HttpMethod::Head => "HEAD",
-        HttpMethod::Patch => "PATCH",
-        HttpMethod::Trace => "TRACE",
-    }
-}
-
-fn method_rs(m: HttpMethod) -> &'static str {
-    match m {
+fn method_rs(op: &Operation) -> String {
+    let name = match op.method {
         HttpMethod::Get => "HttpMethod::Get",
         HttpMethod::Put => "HttpMethod::Put",
         HttpMethod::Post => "HttpMethod::Post",
@@ -814,7 +801,12 @@ fn method_rs(m: HttpMethod) -> &'static str {
         HttpMethod::Head => "HttpMethod::Head",
         HttpMethod::Patch => "HttpMethod::Patch",
         HttpMethod::Trace => "HttpMethod::Trace",
-    }
+        HttpMethod::Query => "HttpMethod::Query",
+        HttpMethod::Custom => {
+            return format!("HttpMethod::Custom({})", string_lit(op.wire_method()));
+        }
+    };
+    name.to_string()
 }
 
 pub(crate) fn safety_str(s: Safety) -> &'static str {
@@ -873,6 +865,7 @@ fn style_rs(s: ParamStyle) -> &'static str {
         ParamStyle::SpaceDelimited => "ParamStyle::SpaceDelimited",
         ParamStyle::PipeDelimited => "ParamStyle::PipeDelimited",
         ParamStyle::DeepObject => "ParamStyle::DeepObject",
+        ParamStyle::Cookie => "ParamStyle::Cookie",
     }
 }
 
@@ -1353,6 +1346,44 @@ pub(crate) fn descriptor_rx(
                 ("encoding", Rx::atom(encoding_rs(b.content.encoding))),
                 ("required", Rx::boolean(b.required)),
                 ("shape", shape_rs),
+                (
+                    "parts",
+                    Rx::list(
+                        b.content
+                            .parts
+                            .iter()
+                            .map(|part| {
+                                Rx::record(
+                                    "PartDescriptor",
+                                    vec![
+                                        ("name", Rx::string(&part.name)),
+                                        (
+                                            "content_type",
+                                            Rx::opt_string(part.content_type.as_deref()),
+                                        ),
+                                        (
+                                            "headers",
+                                            Rx::list(
+                                                part.headers
+                                                    .iter()
+                                                    .map(|h| {
+                                                        Rx::record(
+                                                            "PartHeader",
+                                                            vec![
+                                                                ("name", Rx::string(&h.name)),
+                                                                ("value", Rx::string(&h.value)),
+                                                            ],
+                                                        )
+                                                    })
+                                                    .collect(),
+                                            ),
+                                        ),
+                                    ],
+                                )
+                            })
+                            .collect(),
+                    ),
+                ),
             ],
         ))
     });
@@ -1446,7 +1477,7 @@ pub(crate) fn descriptor_rx(
     let summary = op_summary(op);
     let mut fields = vec![
         ("id", Rx::string(&op.id.0)),
-        ("method", Rx::atom(method_rs(op.method))),
+        ("method", Rx::atom(method_rs(op))),
         ("path", Rx::string(&op.path.raw)),
         ("params", params),
         ("body", body),
@@ -1502,7 +1533,12 @@ pub(crate) fn stream_descriptor_rx(
         stmts,
         Rx::record(
             "StreamDescriptor",
-            vec![("event", event), ("done", done), ("flag", flag)],
+            vec![
+                ("event", event),
+                ("done", done),
+                ("flag", flag),
+                ("text", Rx::boolean(spec.text_data)),
+            ],
         ),
     ))
 }

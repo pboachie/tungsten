@@ -14,6 +14,8 @@ use url::Url;
 
 use crate::idempotency::{MemoryIdempotencyStore, lock};
 use crate::oauth::{Gate, MemoryTokenStore, TokenStore};
+use crate::oauth_attempt::AuthorizationState;
+use crate::telemetry::{Pending, PendingKind};
 use crate::types::{
     ApiDescriptor, AuthConfig, CallOptions, ClientOptions, DiagnosticSink, IdempotencyStore,
     Jitter, MacroDescriptor, Middleware, OperationDescriptor, Outcome, PartialRetryOptions,
@@ -70,13 +72,16 @@ pub(crate) struct CachedToken {
 }
 
 pub(crate) struct Inner {
+    pub allow_insecure_http: bool,
     pub redirects_disabled: bool,
     pub api: Arc<ApiDescriptor>,
     pub auth: AuthConfig,
     pub headers: BTreeMap<String, String>,
     pub base_url: Option<String>,
     pub timeout: Duration,
+    pub deadline: Option<Duration>,
     pub max_response_bytes: Option<u64>,
+    pub max_oauth_token_response_bytes: u64,
     pub max_event_bytes: usize,
     pub max_collect_bytes: usize,
     pub max_collect_time: Duration,
@@ -92,6 +97,9 @@ pub(crate) struct Inner {
     pub http: reqwest::Client,
     pub now: Option<Arc<dyn Fn() -> u64 + Send + Sync>>,
     pub random: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+    pub scheduler: Option<crate::RequestScheduler>,
+    pub tenant: Option<String>,
+    pub telemetry: Option<Arc<crate::telemetry::Telemetry>>,
     pub registry: Mutex<BTreeMap<String, Arc<OperationDescriptor>>>,
     /// Makes "find or create the key of a logical call" atomic, so concurrent
     /// identical calls share one key.
@@ -105,6 +113,7 @@ pub(crate) struct Inner {
     pub token_store: Arc<dyn TokenStore>,
     /// The refresh gate of each `authorizationCode` scheme.
     pub oauth_gates: Mutex<HashMap<String, Arc<Gate>>>,
+    pub oauth_authorization: Mutex<AuthorizationState>,
 }
 
 /// The engine behind every generated client. Cheap to clone (shares one
@@ -170,8 +179,13 @@ impl ClientCore {
                 .map_err(|e| config_error(format!("the HTTP client could not be built: {e}")))?,
         };
         let confirmation_key = match options.confirmation_key.clone() {
-            Some(key) if !key.is_empty() => key,
-            _ => random_bytes::<32>()
+            Some(key) if key.len() >= 32 => key,
+            Some(_) => {
+                return Err(config_error(
+                    "confirmation_key must contain at least 32 bytes; omit it to generate a random key",
+                ));
+            }
+            None => random_bytes::<32>()
                 .ok_or_else(|| config_error("no source of randomness for the confirmation key"))?
                 .to_vec(),
         };
@@ -185,13 +199,16 @@ impl ClientCore {
             .unwrap_or_else(|| Arc::new(MemoryTokenStore::new()));
         let core = ClientCore {
             inner: Arc::new(Inner {
+                allow_insecure_http: options.allow_insecure_http,
                 redirects_disabled,
                 api: Arc::new(api),
                 auth: options.auth,
                 headers: options.headers,
                 base_url,
                 timeout: options.timeout,
-                max_response_bytes: options.max_response_bytes,
+                deadline: options.deadline,
+                max_response_bytes: options.max_response_bytes.or(Some(4 * 1024 * 1024)),
+                max_oauth_token_response_bytes: options.max_oauth_token_response_bytes,
                 max_event_bytes: options.max_event_bytes.max(1),
                 max_collect_bytes: options.max_collect_bytes.max(1),
                 max_collect_time: options.max_collect_time.max(Duration::from_millis(1)),
@@ -209,12 +226,18 @@ impl ClientCore {
                 http,
                 now: options.now,
                 random: options.random,
+                scheduler: options.scheduler,
+                tenant: options.tenant,
+                telemetry: options
+                    .telemetry
+                    .map(|observer| Arc::new(crate::telemetry::Telemetry::new(observer))),
                 registry: Mutex::new(BTreeMap::new()),
                 used_tokens: Mutex::new(HashMap::new()),
                 oauth_tokens: tokio::sync::Mutex::new(HashMap::new()),
                 oauth_refreshes: tokio::sync::Mutex::new(HashMap::new()),
                 token_store,
                 oauth_gates: Mutex::new(HashMap::new()),
+                oauth_authorization: Mutex::new(AuthorizationState::default()),
             }),
         };
         core.register(options.operations);
@@ -251,7 +274,57 @@ impl ClientCore {
     /// send with retries, classify the response. `args` is the arguments
     /// object (a JSON object keyed by argument name).
     pub async fn call(&self, op: &OperationDescriptor, args: Value, opts: &CallOptions) -> Outcome {
-        self.call_with(op, &args, opts, None, None).await
+        self.traced(
+            op,
+            crate::TelemetryEntry::Call,
+            crate::verify::with_call_deadline(
+                self,
+                opts,
+                self.call_with(op, &args, opts, None, None),
+            ),
+        )
+        .await
+    }
+
+    /// Run one public entry point as a telemetry operation (when telemetry
+    /// is on). Only a `call` reports its final HTTP status.
+    async fn traced<T, F: std::future::Future<Output = Result<T>>>(
+        &self,
+        op: &OperationDescriptor,
+        entry: crate::TelemetryEntry,
+        work: F,
+    ) -> Result<T> {
+        let span = self.start_span(op, entry);
+        let pending = Pending::new(span.as_ref(), PendingKind::Operation);
+        let result = crate::telemetry::scoped(span.clone(), work).await;
+        pending.done();
+        if let Some(span) = span {
+            let call = entry == crate::TelemetryEntry::Call;
+            match &result {
+                Ok(response) => span.end(None, false, call.then_some(response.meta.status)),
+                Err(error) => span.end(
+                    Some(&error.diagnostic),
+                    false,
+                    error.diagnostic.http_status.filter(|_| call),
+                ),
+            }
+        }
+        result
+    }
+
+    /// Start the telemetry of one operation; `None` when telemetry is off.
+    pub(crate) fn start_span(
+        &self,
+        op: &OperationDescriptor,
+        entry: crate::TelemetryEntry,
+    ) -> Option<Arc<crate::telemetry::Span>> {
+        let telemetry = self.inner.telemetry.as_ref()?;
+        Some(telemetry.start(
+            &self.inner.api.name,
+            &op.id,
+            entry,
+            crate::classify::is_mutation(op),
+        ))
     }
 
     /// [`ClientCore::call`] for a typed wrapper: the success body is decoded
@@ -271,28 +344,46 @@ impl ClientCore {
         let mut sink = crate::dispatch::TypedSink::<T>::new(op.response.clone());
         // The verification hook may read the response, so it needs the body's JSON form.
         let verifies = opts.verify && op.agent.verify.is_some();
-        let outcome = self
-            .call_with_tracked(
-                op,
-                &args,
+        let span = self.start_span(op, crate::TelemetryEntry::Call);
+        let pending = Pending::new(span.as_ref(), PendingKind::Operation);
+        let outcome = crate::telemetry::scoped(
+            span.clone(),
+            crate::verify::with_call_deadline(
+                self,
                 opts,
-                None,
-                None,
-                (
-                    &mut String::new(),
+                self.call_with_tracked(
+                    op,
+                    &args,
+                    opts,
                     None,
-                    (!verifies).then_some(&mut sink as &mut dyn crate::dispatch::BodySink),
+                    None,
+                    (
+                        &mut String::new(),
+                        None,
+                        (!verifies).then_some(&mut sink as &mut dyn crate::dispatch::BodySink),
+                    ),
                 ),
-            )
-            .await;
-        match (outcome, sink.take_value()) {
+            ),
+        )
+        .await;
+        let result = match (outcome, sink.take_value()) {
             (Ok(response), Some(value)) => Ok(Response {
                 value,
                 meta: response.meta,
                 verification: response.verification,
             }),
             (outcome, _) => crate::dispatch::decode(&op.id, outcome),
+        };
+        pending.done();
+        if let Some(span) = span {
+            match &result {
+                Ok(response) => span.end(None, false, Some(response.meta.status)),
+                Err(error) => {
+                    span.end(Some(&error.diagnostic), false, error.diagnostic.http_status)
+                }
+            }
         }
+        result
     }
 
     /// Run the operation's preview mode: local rendering (no network), a
@@ -304,12 +395,36 @@ impl ClientCore {
         args: Value,
         opts: &CallOptions,
     ) -> Result<PreviewResult> {
-        self.preview_inner(op, &args, opts).await
+        self.traced(
+            op,
+            crate::TelemetryEntry::Preview,
+            crate::verify::with_call_deadline(self, opts, self.preview_inner(op, &args, opts)),
+        )
+        .await
     }
 
     /// Iterate pages; the stream ends after the last page or the first error.
     pub fn pages(&self, op: Arc<OperationDescriptor>, args: Value, opts: CallOptions) -> Pages {
         Pages::new(self.clone(), op, args, opts)
+    }
+
+    /// Iterate the pages of a read-only operation like [`ClientCore::pages`],
+    /// each with a sealed checkpoint token to persist once the page is
+    /// committed to the sink; pass a saved token as
+    /// [`CheckpointOptions::resume`] after a restart to continue with the
+    /// page after it. A token that is malformed, altered, sealed under
+    /// another key, older than `max_age_ms`, stopped, or issued for other
+    /// arguments, origin, tenant, scope or contract is refused
+    /// (`VALIDATION_FAILED`) before any request. Page budgets, cycle
+    /// detection, deadlines and cancellation apply per run.
+    pub fn export_pages(
+        &self,
+        op: Arc<OperationDescriptor>,
+        args: Value,
+        checkpoint: crate::checkpoint::CheckpointOptions,
+        opts: CallOptions,
+    ) -> crate::checkpoint::ExportPages {
+        crate::checkpoint::ExportPages::new(self.clone(), op, args, checkpoint, opts)
     }
 
     /// Call a read operation until `until` holds or the budget runs out. On
@@ -328,7 +443,16 @@ impl ClientCore {
             interval,
             budget,
         };
-        self.poll_with(op, &args, &spec, opts, None).await
+        self.traced(
+            op,
+            crate::TelemetryEntry::Poll,
+            crate::verify::with_call_deadline(
+                self,
+                opts,
+                self.poll_with(op, &args, &spec, opts, None),
+            ),
+        )
+        .await
     }
 
     /// Run a compiled macro; returns its output or the first failing step's
@@ -340,7 +464,41 @@ impl ClientCore {
         input: Value,
         opts: &CallOptions,
     ) -> Outcome {
-        self.run_macro_inner(macro_, &input, opts).await
+        self.traced_macro(
+            macro_,
+            crate::TelemetryEntry::Macro,
+            crate::verify::with_call_deadline(
+                self,
+                opts,
+                self.run_macro_inner(macro_, &input, opts),
+            ),
+        )
+        .await
+    }
+
+    /// Run a macro entry point as a telemetry operation named after the
+    /// macro (when telemetry is on).
+    async fn traced_macro<T, F: std::future::Future<Output = Result<T>>>(
+        &self,
+        macro_: &MacroDescriptor,
+        entry: crate::TelemetryEntry,
+        work: F,
+    ) -> Result<T> {
+        let span = self.inner.telemetry.as_ref().map(|telemetry| {
+            telemetry.start(
+                &self.inner.api.name,
+                &macro_.name,
+                entry,
+                macro_.safety != crate::types::Safety::ReadOnly,
+            )
+        });
+        let pending = Pending::new(span.as_ref(), PendingKind::Operation);
+        let result = crate::telemetry::scoped(span.clone(), work).await;
+        pending.done();
+        if let Some(span) = span {
+            span.end(result.as_ref().err().map(|e| &*e.diagnostic), false, None);
+        }
+        result
     }
 
     /// Preview a macro without sending anything (see `MacroStepPreview`).
@@ -350,7 +508,16 @@ impl ClientCore {
         input: Value,
         opts: &CallOptions,
     ) -> Result<PreviewResult> {
-        self.preview_macro_inner(macro_, &input, opts).await
+        self.traced_macro(
+            macro_,
+            crate::TelemetryEntry::MacroPreview,
+            crate::verify::with_call_deadline(
+                self,
+                opts,
+                self.preview_macro_inner(macro_, &input, opts),
+            ),
+        )
+        .await
     }
 
     // ------------------------------------------------------------ internals
@@ -426,8 +593,12 @@ impl ClientCore {
         };
         if opts.verify && op.agent.verify.is_some() {
             // Verification calls other operations, which may verify in turn.
-            let verification =
-                Box::pin(self.verify(op, &prepared.args, response.value.as_ref(), opts)).await;
+            // It is not part of this operation's telemetry.
+            let verification = Box::pin(crate::telemetry::scoped(
+                None,
+                self.verify(op, &prepared.args, response.value.as_ref(), opts),
+            ))
+            .await;
             response = Response {
                 verification: Some(verification),
                 ..response
@@ -448,6 +619,11 @@ impl ClientCore {
         sink: Option<&mut (dyn crate::dispatch::BodySink + '_)>,
     ) -> std::result::Result<Response<Option<Value>>, crate::types::Error> {
         self.check_send_deadline(prepared, rejected.diagnostic.trace.attempts, None)?;
+        if let crate::serialize::Payload::Upload(source) = &prepared.payload
+            && !source.sendable()
+        {
+            return Err(crate::upload::one_shot_spent(rejected));
+        }
         let Some(scheme) = prepared.oauth.take() else {
             return Err(rejected);
         };
@@ -459,6 +635,7 @@ impl ClientCore {
         else {
             return Err(rejected);
         };
+        // The refresh is a detached task the call waits for only until its deadline.
         let refreshed = self.refresh_after_rejection(&scheme, &current).await;
         self.check_send_deadline(prepared, rejected.diagnostic.trace.attempts, None)?;
         let Some(token) = refreshed else {

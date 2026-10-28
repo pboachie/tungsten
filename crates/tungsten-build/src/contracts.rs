@@ -85,7 +85,11 @@ impl Walk<'_> {
             };
             // Match the compiler's PathItem semantics: a local operation beside
             // `$ref` wins, otherwise retain the referenced operation's location.
+            let query = crate::pathitem::reads_3_2(self.ws, &local);
             for (method, _) in METHODS {
+                if method == "query" && !query {
+                    continue;
+                }
                 let own = child(&local, method);
                 let target = if self.ws.get(&own).is_some() {
                     own
@@ -93,6 +97,26 @@ impl Walk<'_> {
                     child(&base, method)
                 };
                 self.operation(target, method, path);
+            }
+            if query {
+                let extra = |at: &RefTarget| {
+                    self.ws
+                        .get(&child(at, "additionalOperations"))
+                        .and_then(Value::as_object)
+                        .map(|m| m.keys().cloned().collect::<Vec<_>>())
+                        .unwrap_or_default()
+                };
+                let mut seen = BTreeSet::new();
+                for at in [local.clone(), base.clone()] {
+                    for token in extra(&at) {
+                        if tungsten_openapi::custom_method_problem(&token).is_none()
+                            && seen.insert(token.clone())
+                        {
+                            let target = child(&child(&at, "additionalOperations"), &token);
+                            self.operation(target, &token, path);
+                        }
+                    }
+                }
             }
         }
     }
@@ -125,7 +149,12 @@ impl Walk<'_> {
             else {
                 continue;
             };
-            for (media, entry) in content {
+            for media in content.keys() {
+                let at = child(&child(&response, "content"), media);
+                let at = self.ws.deref(&at).unwrap_or(at);
+                let Some(entry) = self.ws.get(&at) else {
+                    continue;
+                };
                 if !is_json_media(media) || reviewed(entry) {
                     continue;
                 }
@@ -135,7 +164,6 @@ impl Walk<'_> {
                     status: status.clone(),
                     media: media.clone(),
                 };
-                let at = child(&child(&response, "content"), media);
                 if entry.get("schema").is_none() {
                     if self.visited.insert((at.doc, at.pointer.clone())) {
                         self.finding("TG0930", "declares JSON content without a schema; the generated response accepts any JSON value", &at, &site);

@@ -521,7 +521,7 @@ public sealed partial class ClientCore
 
     /// <summary>The typed stream of an operation; <paramref name="decode"/> turns an event into the SDK's type.</summary>
     public EventStream<T> StreamTyped<T>(OperationDescriptor op, JsonNode? args, Func<JsonNode?, T> decode, CallOptions? options = null) =>
-        new(new StreamCore(this, op, op.Stream ?? new StreamDescriptor(), args, options ?? new CallOptions()), (ev, index) => Typed.DecodeEvent(op.Id, index, ev, decode));
+        new(new StreamCore(this, op, op.Stream ?? new StreamDescriptor(), args, WithCallDeadline(options ?? new CallOptions())), (ev, index) => Typed.DecodeEvent(op.Id, index, ev, decode));
 
     /// <summary>Sets the stream's request flag to true, in a merged body field or inside an object body argument.</summary>
     private static JsonNode? WithStreamFlag(OperationDescriptor op, StreamDescriptor spec, JsonNode? args)
@@ -716,7 +716,8 @@ public sealed partial class ClientCore
         int index = o.Count;
         var afterEffect = Classify.IsMutation(op) ? " The call took effect; do not repeat it." : "";
         Failure Failed(Diag b) => new(o.Secrets.Scrub(b.Status(o.Meta.Status).RequestId(o.Meta.RequestId).Retry(Retryable.Never).Attempts(o.Meta.Attempts).Build()));
-        if (!Json.TryParse(ev.Data, out var value))
+        JsonNode? value = JsonValue.Create(ev.Data);
+        if (!spec.Text && !Json.TryParse(ev.Data, out value))
         {
             throw Failed(new Diag(op.Id, Category.UnexpectedResponse).Param($"events[{index}]")
                 .Received(Util.EnvelopeValue(JsonValue.Create(ev.Data), false)).Expected("JSON in the data of every event")
@@ -724,7 +725,7 @@ public sealed partial class ClientCore
         }
         if (validateResponses != ValidateResponses.Off && spec.Event is { } schema)
         {
-            var issues = Judge(schema, value);
+            var issues = Judge(op.Id, $"events[{index}]", schema, value);
             if (issues.Count > 0)
             {
                 var issue = issues[0];

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! OpenAPI 3.0/3.1 frontend.
+//! OpenAPI 3.0/3.1 frontend, with a diagnosed subset of 3.2.
 //!
 //! Loads documents (JSON or YAML) with a JSON-Pointer → byte-span index,
 //! applies overlays, normalizes 3.0 constructs to 3.1 form, resolves
@@ -23,8 +23,10 @@ mod normalize;
 mod overlay;
 mod parse;
 mod refs;
+mod source;
 mod spans;
 pub mod swagger;
+mod v32;
 mod version;
 mod walk;
 mod yaml;
@@ -37,6 +39,8 @@ use tungsten_core::{Diagnostics, Digest, SourceId, SourceMap, Span};
 pub use graph::{RefGraph, is_named_schema};
 pub use jsonpath::overlay_target;
 pub use load::{load, load_str};
+pub use source::{CancellationToken, SourceProvider};
+pub use v32::{TEXT_EVENT_DATA, custom_method_problem, response_item_schema};
 
 /// Index into [`Workspace::documents`].
 pub type DocId = usize;
@@ -47,6 +51,10 @@ pub enum SpecVersion {
     /// 3.0.x; the document has been normalized to 3.1 form.
     V30(String),
     V31(String),
+    /// 3.2.x. Constructs equivalent to 3.1 take the 3.1 path unchanged, and
+    /// the `query` method and `additionalOperations` are compiled; each other
+    /// construct 3.2 added is diagnosed (`TG0140`-`TG0156`), never ignored.
+    V32(String),
     /// A file loaded only because another document referenced it.
     Fragment,
 }
@@ -54,6 +62,12 @@ pub enum SpecVersion {
 /// Limits and policies for loading.
 #[derive(Debug, Clone)]
 pub struct LoadOptions {
+    /// Local disk/buffer source snapshot, shared with the compilation driver.
+    /// The selected acquisition root's `.tungsten-inputs` cache is disk-only;
+    /// buffers cannot replace acquired bytes or extend a pinned reference tree.
+    pub sources: SourceProvider,
+    /// Cancellation is cooperative; discard a cancelled workspace.
+    pub cancellation: CancellationToken,
     /// Explicit remote entry acquisition policy; remote `$ref` policy is separate.
     pub acquisition: acquire::Options,
     /// Project directory containing `.tungsten-inputs`; set by the build driver.
@@ -72,6 +86,8 @@ pub struct LoadOptions {
 impl Default for LoadOptions {
     fn default() -> Self {
         Self {
+            sources: SourceProvider::default(),
+            cancellation: CancellationToken::default(),
             acquisition: acquire::Options::default(),
             acquisition_root: PathBuf::from("."),
             allow_remote: vec![],
@@ -111,6 +127,10 @@ pub struct Document {
 }
 
 impl Document {
+    /// Absolute local dependency identity, absent for remote/in-memory input.
+    pub fn path(&self) -> Option<&std::path::Path> {
+        self.path.as_deref()
+    }
     pub fn new(
         source: SourceId,
         name: String,
@@ -155,6 +175,7 @@ pub struct RefTarget {
 /// Everything loaded for one compilation.
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
+    cancellation: CancellationToken,
     pub sources: SourceMap,
     pub documents: Vec<Document>,
     /// Entry documents in the order given to [`load`]; fragments follow.
@@ -173,6 +194,9 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
     /// Resolve a `$ref` string found in document `from`. Handles local
     /// pointers (`#/components/schemas/X`) and relative files
     /// (`common.yaml#/X`, loaded by [`load`]), with percent-decoding and
@@ -248,6 +272,24 @@ pub fn split_pointer(pointer: &str) -> Vec<String> {
 pub mod __testing {
     use serde_json::Value;
     use tungsten_core::{Diagnostic, Diagnostics, SourceId, Span};
+
+    /// Visit document nodes through the same cancellable reference traversal.
+    pub fn visit_document(
+        value: &Value,
+        cancellation: &crate::CancellationToken,
+        mut visit: impl FnMut(&str),
+    ) {
+        crate::walk::walk_cancellable(
+            value,
+            "",
+            crate::walk::Kind::Document,
+            cancellation,
+            |node| {
+                visit(&node.pointer);
+                true
+            },
+        );
+    }
 
     /// Maximum number of nodes YAML alias expansion may add to one document.
     pub const MAX_ALIAS_NODES: usize = crate::yaml::MAX_ALIAS_NODES;

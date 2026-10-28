@@ -8,6 +8,12 @@ version: 0.1.5
 homepage: https://github.com/pboachie/tungsten
 repository: https://github.com/pboachie/tungsten/tree/main/runtimes/dart
 issue_tracker: https://github.com/pboachie/tungsten/issues
+topics:
+  - api-client
+  - sdk
+  - openapi
+  - code-generation
+  - http
 
 environment:
   sdk: ">=3.6.0 <4.0.0"
@@ -18,6 +24,7 @@ platforms:
   windows:
 
 # BSD-3-Clause (dart-lang); SHA-256 and HMAC-SHA-256 for confirmation tokens,
-# content hashes and PKCE.
+# content hashes and PKCE. The caret range is what pub.dev requires of a
+# published package, so consumers can resolve it next to other packages.
 dependencies:
-  crypto: 3.0.7
+  crypto: ^3.0.7

@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
+use crate::classify::is_json_media;
 use crate::types::{
     BodyDescriptor, BodyEncoding, BodyShape, OperationDescriptor, ParamDescriptor, ParamStyle,
 };
@@ -228,8 +229,64 @@ pub fn serialize_header_param(p: &ParamDescriptor, value: &Value) -> String {
     }
 }
 
-/// `name=value` for one cookie parameter (`form` style, values encoded).
+/// Whether `c` is an RFC 6265 `cookie-octet`.
+fn cookie_octet(c: char) -> bool {
+    matches!(c, '\x21' | '\x23'..='\x2B' | '\x2D'..='\x3A' | '\x3C'..='\x5B' | '\x5D'..='\x7E')
+}
+
+/// A `cookie` style value as written; only characters a cookie cannot
+/// carry are percent-encoded.
+fn cookie_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut buf = [0u8; 4];
+    for c in text.chars() {
+        if cookie_octet(c) {
+            out.push(c);
+        } else {
+            out.push_str(&encode_component(c.encode_utf8(&mut buf)));
+        }
+    }
+    out
+}
+
+/// OpenAPI 3.2 `cookie` style: `n=v`, `n=v1,v2` or exploded `n=v1; n=v2`
+/// and `k=v; k2=v2`.
+fn serialize_cookie_style(p: &ParamDescriptor, value: &Value) -> String {
+    match value {
+        Value::Array(list) => {
+            let items: Vec<String> = list
+                .iter()
+                .filter(|v| !v.is_null())
+                .map(|v| cookie_text(&scalar(v)))
+                .collect();
+            if p.explode && !items.is_empty() {
+                let pairs: Vec<String> = items.iter().map(|i| format!("{}={i}", p.wire)).collect();
+                return pairs.join("; ");
+            }
+            format!("{}={}", p.wire, items.join(","))
+        }
+        Value::Object(map) => {
+            let pairs: Vec<(String, String)> = entries(map)
+                .into_iter()
+                .map(|(k, v)| (cookie_text(k), cookie_text(&scalar(v))))
+                .collect();
+            if p.explode && !pairs.is_empty() {
+                let pairs: Vec<String> = pairs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                return pairs.join("; ");
+            }
+            let flat: Vec<String> = pairs.into_iter().flat_map(|(k, v)| [k, v]).collect();
+            format!("{}={}", p.wire, flat.join(","))
+        }
+        other => format!("{}={}", p.wire, cookie_text(&scalar(other))),
+    }
+}
+
+/// `name=value` for one cookie parameter (`form` style, values encoded; or
+/// `cookie` style).
 pub fn serialize_cookie_param(p: &ParamDescriptor, value: &Value) -> String {
+    if p.style == ParamStyle::Cookie {
+        return serialize_cookie_style(p, value);
+    }
     match value {
         Value::Array(list) => format!("{}={}", p.wire, encoded_items(list).join(",")),
         Value::Object(map) => {
@@ -250,6 +307,11 @@ pub fn serialize_cookie_param(p: &ParamDescriptor, value: &Value) -> String {
 pub enum PartContent {
     Text(String),
     Json(String),
+    /// Text sent with the media type the field's `encoding` declares.
+    Typed {
+        text: String,
+        content_type: String,
+    },
     File {
         data: Vec<u8>,
         filename: String,
@@ -261,6 +323,9 @@ pub enum PartContent {
 pub struct MultipartPart {
     pub name: String,
     pub content: PartContent,
+    /// Further part headers (name, value), from the field's declared
+    /// encoding.
+    pub headers: Vec<(String, String)>,
 }
 
 /// What goes on the wire.
@@ -269,6 +334,8 @@ pub enum Payload {
     Empty,
     Bytes(Vec<u8>),
     Multipart(Vec<MultipartPart>),
+    /// A streamed body: each attempt reads the source anew.
+    Upload(crate::upload::UploadSource),
 }
 
 /// An encoded request body.
@@ -435,6 +502,19 @@ pub fn encode_body(
             let mut parts = Vec::new();
             let mut display = Map::new();
             for (k, v) in entries(map) {
+                let declared_part = descriptor.and_then(|d| d.parts.iter().find(|p| p.name == *k));
+                let declared = declared_part.and_then(|p| p.content_type.as_deref());
+                let headers: Vec<(String, String)> = declared_part
+                    .map(|p| {
+                        p.headers
+                            .iter()
+                            .map(|h| (h.name.clone(), h.value.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let declared_json = declared.is_some_and(|ct| {
+                    is_json_media(&ct.split(';').next().unwrap_or("").trim().to_lowercase())
+                });
                 let list: Vec<&Value> = match v {
                     Value::Array(items) => items.iter().filter(|i| !i.is_null()).collect(),
                     other => vec![other],
@@ -455,29 +535,51 @@ pub fn encode_body(
                         }
                         shown.push(Value::String(binary_display(
                             binary.data.len(),
-                            binary.content_type.as_deref().unwrap_or(""),
+                            binary.content_type.as_deref().or(declared).unwrap_or(""),
                         )));
                         parts.push(MultipartPart {
                             name: k.clone(),
+                            headers: headers.clone(),
                             content: PartContent::File {
                                 filename: binary.filename.clone().unwrap_or_else(|| k.clone()),
                                 content_type: binary
                                     .content_type
                                     .clone()
+                                    .or_else(|| declared.map(str::to_owned))
                                     .unwrap_or_else(|| "application/octet-stream".to_owned()),
                                 data: binary.data,
                             },
                         });
                     } else if item.is_object() {
+                        let content = match declared {
+                            Some(ct) if declared_json => PartContent::Typed {
+                                text: json_text(item),
+                                content_type: ct.to_owned(),
+                            },
+                            _ => PartContent::Json(json_text(item)),
+                        };
                         parts.push(MultipartPart {
                             name: k.clone(),
-                            content: PartContent::Json(json_text(item)),
+                            headers: headers.clone(),
+                            content,
                         });
                         shown.push(item.clone());
                     } else {
+                        let content = match declared {
+                            Some(ct) => PartContent::Typed {
+                                text: if declared_json {
+                                    json_text(item)
+                                } else {
+                                    scalar(item)
+                                },
+                                content_type: ct.to_owned(),
+                            },
+                            None => PartContent::Text(scalar(item)),
+                        };
                         parts.push(MultipartPart {
                             name: k.clone(),
-                            content: PartContent::Text(scalar(item)),
+                            headers: headers.clone(),
+                            content,
                         });
                         shown.push(Value::String(scalar(item)));
                     }

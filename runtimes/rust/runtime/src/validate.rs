@@ -7,10 +7,27 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use serde_json::Value;
 
 use crate::types::{Issue, Validation, Validator};
+use crate::unchecked::PatternNote;
 
 /// Run `validator` on `value`; `Err` when the validator panicked.
 pub(crate) fn run(validator: &dyn Validator, value: &Value) -> Result<Validation, ()> {
     catch_unwind(AssertUnwindSafe(|| validator.validate(value))).map_err(|_| ())
+}
+
+/// [`run`], also returning the patterns the validator could not check.
+pub(crate) fn run_noted(
+    validator: &dyn Validator,
+    value: &Value,
+) -> (Result<Validation, ()>, Vec<PatternNote>) {
+    crate::unchecked::collect(|| run(validator, value))
+}
+
+/// [`judge`], also returning the patterns the validator could not check.
+pub(crate) fn judge_noted(
+    validator: &dyn Validator,
+    value: &Value,
+) -> (Validation, Vec<PatternNote>) {
+    crate::unchecked::collect(|| judge(validator, value))
 }
 
 /// [`run`] for validators that only judge (responses, page items): a panic is

@@ -6,19 +6,11 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub(super) fn preflight(args: &InitArgs) -> Result<(), &'static str> {
+    let init = &tungsten_config::capabilities::INIT;
+    // Docs alone builds nothing to set up.
     if args.targets.is_empty()
-        || !args.targets.iter().any(|t| {
-            matches!(
-                t.as_str(),
-                "typescript" | "mcp" | "webmcp" | "python" | "rust" | "cli"
-            )
-        })
-        || args.targets.iter().any(|t| {
-            !matches!(
-                t.as_str(),
-                "typescript" | "mcp" | "webmcp" | "docs" | "python" | "rust" | "cli"
-            )
-        })
+        || args.targets.iter().all(|t| t == "docs")
+        || args.targets.iter().any(|t| !init.local_setup(t))
     {
         return Err("local setup supports TypeScript, Python, Rust/CLI, MCP, WebMCP and docs");
     }
@@ -45,16 +37,21 @@ pub(super) fn preflight(args: &InitArgs) -> Result<(), &'static str> {
     {
         return Ok(());
     }
-    execute(
-        "node",
-        &[
-            "-e",
-            "process.exit(Number(process.versions.node.split('.')[0]) >= 22 ? 0 : 1)",
-        ],
-        Path::new("."),
-        Duration::from_secs(5),
-    )
-    .map_err(|_| "Node >=22 is required for local setup (toolchain check timed out or failed)")?;
+    // Check the same declared Node requirements doctor enforces, so a
+    // selected MCP target cannot pass on a Node line below its floor.
+    let check = node_check(args.targets.iter().filter_map(|t| {
+        tungsten_config::capabilities::target(t)
+            .into_iter()
+            .flat_map(|target| target.prerequisites)
+            .find(|requirement| requirement.tool == "node")
+    }));
+    execute("node", &["-e", &check], Path::new("."), Duration::from_secs(5)).map_err(|_| {
+        if args.targets.iter().any(|t| t == "mcp") {
+            "Node >=22.13 (>=23.2 on Node 23) is required for local MCP setup (toolchain check timed out or failed)"
+        } else {
+            "Node >=22 is required for local setup (toolchain check timed out or failed)"
+        }
+    })?;
     execute(
         npm(),
         &["--version"],
@@ -63,6 +60,28 @@ pub(super) fn preflight(args: &InitArgs) -> Result<(), &'static str> {
     )
     .map_err(|_| "npm is required for local setup (toolchain check timed out or failed)")?;
     Ok(())
+}
+
+/// A script that exits 0 only when the running Node satisfies every requirement.
+fn node_check<'a>(
+    requirements: impl Iterator<Item = &'a tungsten_config::capabilities::ToolRequirement>,
+) -> String {
+    let mut conditions = vec!["a>=22".to_string()];
+    for requirement in requirements {
+        if let Some([major, minor]) = requirement.minimum {
+            conditions.push(format!("(a>{major}||(a==={major}&&b>={minor}))"));
+        }
+        if let Some([major, minor]) = requirement.maximum_exclusive {
+            conditions.push(format!("(a<{major}||(a==={major}&&b<{minor}))"));
+        }
+        for [major, minor] in requirement.excluded_versions {
+            conditions.push(format!("!(a==={major}&&b==={minor})"));
+        }
+    }
+    format!(
+        "const [a,b]=process.versions.node.split('.').map(Number);process.exit({}?0:1)",
+        conditions.join("&&")
+    )
 }
 
 fn npm() -> &'static str {

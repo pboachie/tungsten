@@ -26,3 +26,6 @@ rustc-ice-*.txt
 # Local runtime builds and verified CI artifact links
 runtimes/*/node_modules
 runtimes/*/dist
+
+# Local build output of the external Go emitter (go build in emitters/go)
+/emitters/go/go

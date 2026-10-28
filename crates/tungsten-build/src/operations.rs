@@ -29,7 +29,8 @@ use crate::rpc::{self, RpcVariant};
 use crate::{NamespaceInput, bodies, params, responses, streams};
 
 /// Path item members that are operations, in visiting order.
-pub(crate) const METHODS: [(&str, HttpMethod); 8] = [
+/// `query` is read only from OpenAPI 3.2 documents (see `PathItem`).
+pub(crate) const METHODS: [(&str, HttpMethod); 9] = [
     ("get", HttpMethod::Get),
     ("put", HttpMethod::Put),
     ("post", HttpMethod::Post),
@@ -38,6 +39,7 @@ pub(crate) const METHODS: [(&str, HttpMethod); 8] = [
     ("head", HttpMethod::Head),
     ("patch", HttpMethod::Patch),
     ("trace", HttpMethod::Trace),
+    ("query", HttpMethod::Query),
 ];
 
 /// The operation being built, as the part builders see it.
@@ -72,6 +74,8 @@ pub(crate) struct NamespaceOps {
 struct Skeleton {
     path: String,
     method: HttpMethod,
+    /// The wire token of an `additionalOperations` method.
+    custom_method: Option<String>,
     /// Owners of path-level parameters, base first (see `pathitem`).
     path_owners: Vec<RefTarget>,
     target: RefTarget,
@@ -94,6 +98,9 @@ pub(crate) fn build_namespace(
     let ns = config.namespace.as_str();
     let mut skeletons = enumerate(cx, input);
     for sk in &skeletons {
+        if cx.ws.is_cancelled() {
+            break;
+        }
         filter::report_excluded(
             cx,
             &format!("{ns}.{}", sk.local_id),
@@ -111,6 +118,9 @@ pub(crate) fn build_namespace(
     // The envelope of rpc variants is built once and shared.
     let mut envelope: Option<(RefTarget, BuiltOp)> = None;
     for sk in &skeletons {
+        if cx.ws.is_cancelled() {
+            break;
+        }
         let built = match (&sk.rpc, &config.rpc_unflatten) {
             (Some(variant), Some(rpc)) => {
                 let base = match &envelope {
@@ -147,6 +157,9 @@ fn enumerate(cx: &mut Ctx<'_>, input: &NamespaceInput) -> Vec<Skeleton> {
     };
     let mut out = vec![];
     for path in paths.keys() {
+        if cx.ws.is_cancelled() {
+            break;
+        }
         let Some(entry) = PathItem::resolve(cx, &child(&paths_at, path)) else {
             continue;
         };
@@ -175,18 +188,20 @@ fn enumerate(cx: &mut Ctx<'_>, input: &NamespaceInput) -> Vec<Skeleton> {
                 &path_item,
             );
         }
-        for (word, method) in METHODS {
-            let Some((target, op)) = entry.operation(word) else {
-                continue;
-            };
+        let standard = METHODS.iter().filter_map(|(word, method)| {
+            let (target, op) = entry.operation(word)?;
+            Some((word.to_ascii_uppercase(), *method, None, target, op))
+        });
+        let custom = entry.additional().into_iter().map(|(token, target, op)| {
+            (token.clone(), HttpMethod::Custom, Some(token), target, op)
+        });
+        let candidates: Vec<_> = standard.chain(custom).collect();
+        for (wire, method, custom_method, target, op) in candidates {
             if !op.is_object() {
                 cx.report(
                     Diagnostic::warning(
                         "TG0508",
-                        format!(
-                            "operation {} {path} must be an object; ignored",
-                            word.to_ascii_uppercase()
-                        ),
+                        format!("operation {wire} {path} must be an object; ignored"),
                     ),
                     &target,
                 );
@@ -199,15 +214,12 @@ fn enumerate(cx: &mut Ctx<'_>, input: &NamespaceInput) -> Vec<Skeleton> {
             let local_id = match &operation_id {
                 Some(id) => id.clone(),
                 None => {
-                    let id = synthesize_operation_id(method, params::split_query(path).0);
+                    let id = synthesize_operation_id(&wire, params::split_query(path).0);
                     if !matches!(disposition, Disposition::Drop(_)) {
                         cx.report(
                             Diagnostic::warning(
                                 "TG0403",
-                                format!(
-                                    "operation {} {path} has no operationId; using `{id}`",
-                                    word.to_ascii_uppercase()
-                                ),
+                                format!("operation {wire} {path} has no operationId; using `{id}`"),
                             )
                             .with_help(
                                 "add an operationId so the id does not change with the path",
@@ -221,6 +233,7 @@ fn enumerate(cx: &mut Ctx<'_>, input: &NamespaceInput) -> Vec<Skeleton> {
             out.push(Skeleton {
                 path: path.clone(),
                 method,
+                custom_method,
                 path_owners: entry.owners(),
                 target,
                 operation_id,
@@ -304,7 +317,12 @@ fn build_op(
     // The shared parts of rpc methods are built under the envelope's id.
     let local = match (&sk.rpc, &sk.operation_id) {
         (Some(_), Some(id)) => id.clone(),
-        (Some(_), None) => synthesize_operation_id(sk.method, params::split_query(&sk.path).0),
+        (Some(_), None) => synthesize_operation_id(
+            sk.custom_method
+                .as_deref()
+                .unwrap_or(crate::names::method_word(sk.method)),
+            params::split_query(&sk.path).0,
+        ),
         (None, _) => sk.local_id.clone(),
     };
     let id = format!("{ns}.{local}");
@@ -347,6 +365,7 @@ fn build_op(
         name: Ident::new(&local),
         operation_id: sk.operation_id.clone(),
         method: sk.method,
+        custom_method: sk.custom_method.clone(),
         path: template,
         doc: doc_of(value),
         tags,
@@ -398,6 +417,7 @@ fn rpc_op(
                 media_type: variant.media_type.clone(),
                 ty: cx.tb.type_ref(ns, params, &hint),
                 encoding: BodyEncoding::Json,
+                parts: vec![],
             }],
             required,
             doc: None,

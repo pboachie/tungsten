@@ -27,11 +27,14 @@ class AttemptRequest:
     url: str
     method: HttpMethod
     headers: Mapping[str, str]
-    body: bytes | None
+    #: The bytes, or the attempt of a streamed upload (``_upload.UploadAttempt``).
+    body: bytes | object | None
     timeout_ms: float
-    #: Hand a ``text/event-stream`` answer with a 2xx status back unread, as
-    #: a ``Streaming`` outcome; any other answer is read as usual.
-    stream: bool = False
+    #: True: hand a ``text/event-stream`` answer with a 2xx status back
+    #: unread, as a ``Streaming`` outcome. ``"bytes"``: hand back any 2xx
+    #: answer that has a body (a download), its reads still bounded by
+    #: ``deadline_ms``. Any other answer is read as usual.
+    stream: bool | Literal["bytes"] = False
     #: With ``stream``: the silence, in milliseconds, after which a read of
     #: the body times out. Default ``timeout_ms``.
     idle_ms: float | None = None
@@ -52,7 +55,7 @@ class Answered:
 
 @dataclass(frozen=True, slots=True)
 class Streaming:
-    """A 2xx ``text/event-stream`` answer whose body has not been read.
+    """A 2xx ``text/event-stream`` answer (or download) whose body has not been read.
     ``stream`` is the driver's handle: read it with ``read_chunk`` (the
     driver closes it when the iteration ends)."""
 
@@ -75,9 +78,17 @@ class Lost:
     detail: str
 
 
+#: The outcome of every send of a flow finished without I/O after its task
+#: was cancelled; compared by identity.
+CANCELLED_SEND = Lost("cancelled")
+
+
 @dataclass(frozen=True, slots=True)
 class TimedOut:
     """No response within the attempt's deadline, after the request was (possibly) sent."""
+
+    #: The operation's total deadline, not the per-attempt timeout, ran out.
+    deadline: bool = False
 
 
 AttemptOutcome = Answered | Streaming | NotSent | Lost | TimedOut
@@ -171,10 +182,11 @@ class StreamEnded:
 
 @dataclass(frozen=True, slots=True)
 class StreamFailed:
-    """The body could not be read: no bytes within the attempt timeout, or the
-    connection failed before the stream ended."""
+    """The body could not be read: no bytes within the attempt timeout, the
+    deadline of a download ran out, or the connection failed before the
+    stream ended."""
 
-    kind: Literal["timeout", "lost"]
+    kind: Literal["timeout", "deadline", "lost"]
 
 
 ReadOutcome = Chunk | StreamEnded | StreamFailed
@@ -193,13 +205,28 @@ class PollExpired(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class Acquire:
+    """Wait for capacity of a ``RequestScheduler``; the result is a
+    ``Permit`` or a ``Rejection``. Inside ``Bounded`` the deadline also ends
+    the wait."""
+
+    scheduler: object
+    key: str
+    kind: Literal["call", "stream"]
+    random: Callable[[], float]
+    #: Absolute ``time.monotonic()`` milliseconds that also end the wait.
+    deadline_ms: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Bounded:
     effect: object
     deadline_ms: float
 
 
 Effect = (
-    Bounded
+    Acquire
+    | Bounded
     | Send
     | Sleep
     | StoreGet
@@ -229,6 +256,16 @@ def read_chunk(stream: object) -> Flow[ReadOutcome]:
 
 def close_stream(stream: object) -> Flow[None]:
     yield CloseStream(stream)
+
+
+def acquire(
+    scheduler: object,
+    key: str,
+    kind: Literal["call", "stream"],
+    random: Callable[[], float],
+    deadline_ms: float | None = None,
+) -> Flow[object]:
+    return (yield Acquire(scheduler, key, kind, random, deadline_ms))
 
 
 def sleep(ms: float) -> Flow[None]:

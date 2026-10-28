@@ -19,6 +19,7 @@ mod explain_table;
 mod html;
 mod input;
 pub mod output;
+mod policy;
 pub mod render;
 mod stats;
 pub mod targets;
@@ -56,6 +57,11 @@ pub mod exit {
     /// over existing files, or `generate` into a directory tungsten did not
     /// write, without `--force`); it never prompts.
     pub const REFUSED: i32 = 4;
+    /// `update check` found a newer release with this platform's archive.
+    pub const UPDATE_AVAILABLE: i32 = 5;
+    /// `update check` could not confirm a usable release: offline, opted out,
+    /// network or metadata failure, or the platform archive is missing.
+    pub const UPDATE_UNCONFIRMED: i32 = 6;
 }
 
 /// How long `tungsten mock` serves after printing its address: until this
@@ -74,6 +80,10 @@ impl std::fmt::Debug for ServeUntil {
 /// deterministic under test.
 #[derive(Debug, Clone, Default)]
 pub struct CliEnv {
+    /// Explicitly selected immutable context for this invocation. The CLI
+    /// intersects its optional selection; projects/editor overrides cannot
+    /// replace it. Recapture/revalidate selections for each new invocation.
+    pub policy: Option<Arc<tungsten_core::policy::InvocationPolicy>>,
     /// Whether stderr is an interactive terminal.
     pub is_tty: bool,
     /// Whether color is disabled (the `NO_COLOR` convention).
@@ -106,6 +116,9 @@ pub(crate) struct Report {
     pub error: Option<CliError>,
     /// Human-mode stdout text.
     pub human: String,
+    /// Human-mode stderr text written after the diagnostics: diagnostics
+    /// already rendered against sources the report does not carry.
+    pub rendered: String,
     /// Human mode: show a repeated warning or info code only a few times.
     pub collapse: Option<Collapse>,
     /// A mock server started by `mock`, served after the report is printed.
@@ -133,6 +146,7 @@ impl Report {
             result: None,
             error: None,
             human: String::new(),
+            rendered: String::new(),
             collapse: None,
             serving: None,
         }
@@ -154,7 +168,11 @@ impl Report {
 /// The server owns the process streams, so the binary calls this before it
 /// locks them for [`run`].
 pub fn lsp(args: &[OsString]) -> Option<i32> {
-    match args::Cli::try_parse_from(args).ok()?.command {
+    let cli = args::Cli::try_parse_from(args).ok()?;
+    if cli.policy.is_some() || cli.policy_digest.is_some() {
+        return None;
+    }
+    match cli.command {
         args::Command::Lsp(lsp) => Some(commands::lsp::serve(&lsp)),
         _ => None,
     }
@@ -168,32 +186,194 @@ pub fn run(
     stderr: &mut dyn Write,
     env: &CliEnv,
 ) -> i32 {
-    let args: Vec<OsString> = args.into_iter().collect();
+    run_inner(
+        args.into_iter().collect(),
+        stdout,
+        stderr,
+        env,
+        tungsten_mock::RunCancellation::default(),
+        false,
+    )
+}
+
+/// Embed scenario execution or support-bundle export with cooperative
+/// cancellation; never changes signal masks. Export commits at publication.
+pub fn run_with_cancellation(
+    args: impl IntoIterator<Item = OsString>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+    env: &CliEnv,
+    cancellation: tungsten_mock::RunCancellation,
+) -> i32 {
+    run_inner(
+        args.into_iter().collect(),
+        stdout,
+        stderr,
+        env,
+        cancellation,
+        false,
+    )
+}
+
+/// Process entry point. Scenario runs (Ctrl-C on macOS and Windows) and Linux
+/// support-bundle exports own scoped SIGINT/SIGTERM capture;
+/// library callers use `run` or `run_with_cancellation` instead.
+pub fn run_binary(
+    args: impl IntoIterator<Item = OsString>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+    env: &CliEnv,
+) -> i32 {
+    run_inner(
+        args.into_iter().collect(),
+        stdout,
+        stderr,
+        env,
+        tungsten_mock::RunCancellation::default(),
+        true,
+    )
+}
+
+fn run_inner(
+    args: Vec<OsString>,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+    env: &CliEnv,
+    cancellation: tungsten_mock::RunCancellation,
+    binary: bool,
+) -> i32 {
     let color = env.color();
     let cli = match args::Cli::try_parse_from(&args) {
         Ok(cli) => cli,
         Err(err) => return usage_error(&err, wants_json(&args), color, stdout, stderr),
     };
-    let report = panic::catch_unwind(AssertUnwindSafe(|| commands::dispatch(&cli, env)))
-        .unwrap_or_else(|payload| {
-            let message = payload
-                .downcast_ref::<&str>()
-                .map(|s| (*s).to_string())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "unknown panic".to_string());
-            Report::new(cli.command_name().unwrap_or(CommandName::Check)).failed(
+    let selected_env = match policy::select(&cli, env) {
+        Ok(selected) => selected,
+        Err(report) => {
+            return if cli.json {
+                emit_json(*report, stdout)
+            } else {
+                emit_human(*report, color, stdout, stderr)
+            };
+        }
+    };
+    let env = &selected_env;
+    let mut cli = cli;
+    if let Err(report) = commands::workspace::select(&mut cli) {
+        return if cli.json {
+            emit_json(*report, stdout)
+        } else {
+            emit_human(*report, color, stdout, stderr)
+        };
+    }
+    let cli = cli;
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
+    let signals = if cfg!(target_os = "linux")
+        && binary
+        && matches!(&cli.command, args::Command::SupportBundle(bundle) if bundle.output.is_some())
+    {
+        // Turns SIGINT/SIGTERM into cooperative cancellation so an interrupted
+        // export removes its temporary file. Without capture, the default
+        // disposition applies, as before.
+        commands::scenario::BinarySignals::capture_interrupts().ok()
+    } else if binary
+        && matches!(
+            &cli.command,
+            args::Command::Scenario {
+                command: args::ScenarioCommand::Run(_)
+            }
+        )
+    {
+        match commands::scenario::BinarySignals::capture() {
+            Ok(signals) => Some(signals),
+            Err(_) => {
+                let report = Report::new(CommandName::Scenario).failed(
+                    exit::INTERNAL,
+                    CliError::new(
+                        ErrorKind::Io,
+                        "cannot establish scenario cancellation and child ownership",
+                    ).with_help(if cfg!(target_os = "linux") {
+                        "Linux scenario run requires readable /proc/self/status and default SIGCHLD disposition"
+                    } else {
+                        "scenario run could not install its Ctrl-C handler"
+                    }),
+                );
+                return if cli.json {
+                    emit_json(report, stdout)
+                } else {
+                    emit_human(report, color, stdout, stderr)
+                };
+            }
+        }
+    } else {
+        None
+    };
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
+    let cancellation = signals.as_ref().map_or(cancellation, |s| s.cancellation());
+    let report = panic::catch_unwind(AssertUnwindSafe(|| {
+        commands::dispatch(&cli, env, &cancellation)
+    }))
+    .unwrap_or_else(|payload| {
+        if matches!(&cli.command, args::Command::Scenario { .. }) {
+            return Report::new(CommandName::Scenario).failed(
                 exit::INTERNAL,
-                CliError::new(ErrorKind::Internal, format!("internal error: {message}"))
-                    .with_help("this is a bug in tungsten; please report it with the input"),
-            )
-        });
+                CliError::new(ErrorKind::Internal, "internal scenario runner failure"),
+            );
+        }
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
+        Report::new(cli.command_name().unwrap_or(CommandName::Check)).failed(
+            exit::INTERNAL,
+            CliError::new(ErrorKind::Internal, format!("internal error: {message}"))
+                .with_help("this is a bug in tungsten; please report it with the input"),
+        )
+    });
     let mut report = report;
+    #[cfg(any(target_os = "linux", target_vendor = "apple", windows))]
+    if let Some(signals) = signals {
+        match signals.restore() {
+            // Export commits at publication; a later signal changes nothing.
+            Ok(true) if matches!(&cli.command, args::Command::SupportBundle(_)) => {}
+            Ok(true) => commands::scenario::reject_late_cancellation(&mut report),
+            Ok(false) => {}
+            Err(_) => {
+                report = report.failed(
+                    exit::INTERNAL,
+                    CliError::new(ErrorKind::Io, "cannot restore scenario signal mask"),
+                );
+            }
+        }
+    }
     let serving = report.serving.take();
     let code = if cli.json {
         emit_json(report, stdout)
     } else {
         emit_human(report, color && !cli.forces_plain(), stdout, stderr)
     };
+    // Opt-in, cache-only update notice: interactive human-mode binary runs
+    // only, never on protocol, JSON, policy, offline or CI invocations.
+    if binary
+        && serving.is_none()
+        && !cli.json
+        && !cli.offline
+        && cli.policy.is_none()
+        && cli.policy_digest.is_none()
+        && env.is_tty
+        && !matches!(
+            cli.command,
+            args::Command::Update { .. } | args::Command::Lsp(_)
+        )
+    {
+        commands::update_notice::after_command(
+            stderr,
+            &commands::update_notice::NoticeEnv::from_process(),
+            tungsten_build::TUNGSTEN_VERSION,
+            std::time::SystemTime::now(),
+        );
+    }
     if let Some(server) = serving {
         if code == exit::OK {
             serve(&server.base_url(), env);
@@ -341,6 +521,7 @@ fn emit_human(report: Report, color: bool, stdout: &mut dyn Write, stderr: &mut 
             );
         }
     }
+    let _ = stderr.write_all(report.rendered.as_bytes());
     let mut code = report.exit;
     if !report.human.is_empty() && write_or_internal(stdout, &report.human) != exit::OK {
         code = exit::INTERNAL;

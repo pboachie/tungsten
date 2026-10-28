@@ -14,9 +14,11 @@ fn hinted(d: &tungsten_contract::Diagnostic) -> String {
     format!("{d} (see `tungsten explain {}`)", d.code)
 }
 
-fn har_paths(args: &InitArgs) -> Result<std::collections::BTreeMap<String, String>, String> {
-    let Some(path) = &args.har_paths else {
-        return Ok(Default::default());
+fn har_paths(
+    args: &ConvertOptions<'_>,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let Some(path) = args.har_paths else {
+        return Ok(args.har_path_map.cloned().unwrap_or_default());
     };
     if !std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) {
         return Err("HAR path mapping must be a regular JSON file".into());
@@ -208,6 +210,31 @@ pub(super) struct PreparedImport {
     report: Option<serde_json::Value>,
 }
 
+/// How a source is converted: the importer settings of `init` that
+/// `refresh-import` repeats for a new revision of the same source.
+pub(super) struct ConvertOptions<'a> {
+    pub input_format: &'a str,
+    pub route: &'a [String],
+    pub shell_dialect: &'a str,
+    pub har_origin: Option<&'a str>,
+    pub har_paths: Option<&'a Path>,
+    /// Reviewed HAR path templates recorded by an earlier conversion; used
+    /// when `har_paths` names no file.
+    pub har_path_map: Option<&'a std::collections::BTreeMap<String, String>>,
+    pub include_prefix: &'a [String],
+    pub exclude_prefix: &'a [String],
+    pub redact_property: &'a [String],
+}
+
+impl PreparedImport {
+    pub(super) fn document(&self) -> &serde_json::Value {
+        &self.document
+    }
+    pub(super) fn report(&self) -> Option<&serde_json::Value> {
+        self.report.as_ref()
+    }
+}
+
 /// Detect and convert an input without writing project files. OpenAPI input is
 /// left in place so relative references retain meaning.
 pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> {
@@ -226,8 +253,29 @@ pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> 
     let Some(source) = source else {
         return Ok(None);
     };
+    convert(
+        &source,
+        &ConvertOptions {
+            input_format: &args.input_format,
+            route: &args.route,
+            shell_dialect: &args.shell_dialect,
+            har_origin: args.har_origin.as_deref(),
+            har_paths: args.har_paths.as_deref(),
+            har_path_map: None,
+            include_prefix: &args.include_prefix,
+            exclude_prefix: &args.exclude_prefix,
+            redact_property: &args.redact_property,
+        },
+    )
+}
+
+/// Convert one source file; `None` when it is OpenAPI and needs no conversion.
+pub(super) fn convert(
+    source: &Path,
+    args: &ConvertOptions<'_>,
+) -> Result<Option<PreparedImport>, String> {
     let mut bytes = Vec::new();
-    std::fs::File::open(&source)
+    std::fs::File::open(source)
         .map_err(|_| "cannot open input file")?
         .take(8 * 1024 * 1024 + 1)
         .read_to_end(&mut bytes)
@@ -251,6 +299,9 @@ pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> 
                 .extension()
                 .is_some_and(|ext| matches!(ext.to_str(), Some("http" | "rest"))));
     let mut import_report = None;
+    // Reviewed importer settings, saved in the report so `refresh-import`
+    // converts a new revision of the source the same way.
+    let mut settings = serde_json::Map::new();
     let mut converted = if is_curl || is_http {
         let limits = Limits::default();
         let evidence = if is_curl {
@@ -259,7 +310,7 @@ pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> 
                     "saved cURL requires exactly one explicit --route path template".into(),
                 );
             }
-            let dialect = match args.shell_dialect.as_str() {
+            let dialect = match args.shell_dialect {
                 "cmd" => tungsten_contract::request_import::ShellDialect::WindowsCmd,
                 "powershell" => tungsten_contract::request_import::ShellDialect::PowerShell,
                 "posix" => tungsten_contract::request_import::ShellDialect::Posix,
@@ -269,7 +320,7 @@ pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> 
         } else {
             tungsten_contract::request_import::http(
                 text,
-                &args.route,
+                args.route,
                 &std::collections::BTreeMap::new(),
                 &limits,
             )
@@ -278,16 +329,41 @@ pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> 
         let output = tungsten_contract::infer(&evidence, &ReviewedOverrides::default(), &limits)
             .map_err(|error| hinted(&error))?;
         import_report = Some(serde_json::json!({"contract": output.report}));
+        settings.insert(
+            "input_format".into(),
+            (if is_curl { "curl" } else { "http" }).into(),
+        );
+        settings.insert("route".into(), args.route.into());
+        if is_curl {
+            settings.insert("shell_dialect".into(), args.shell_dialect.into());
+        }
         output.openapi
     } else if root.get("log").is_some() {
         let limits = Limits::default();
+        let path_templates = har_paths(args)?;
+        for (key, value) in [
+            ("route", args.route),
+            ("include_prefix", args.include_prefix),
+            ("exclude_prefix", args.exclude_prefix),
+            ("redact_property", args.redact_property),
+        ] {
+            if !value.is_empty() {
+                settings.insert(key.into(), value.into());
+            }
+        }
+        if let Some(origin) = args.har_origin {
+            settings.insert("har_origin".into(), origin.into());
+        }
+        if !path_templates.is_empty() {
+            settings.insert("har_paths".into(), serde_json::json!(path_templates));
+        }
         let options = tungsten_contract::har::HarOptions {
-            origin: args.har_origin.clone(),
-            path_templates: har_paths(args)?,
-            include_prefixes: args.include_prefix.clone(),
-            exclude_prefixes: args.exclude_prefix.clone(),
+            origin: args.har_origin.map(str::to_owned),
+            path_templates,
+            include_prefixes: args.include_prefix.to_vec(),
+            exclude_prefixes: args.exclude_prefix.to_vec(),
             redact_properties: args.redact_property.iter().cloned().collect(),
-            route_templates: args.route.clone(),
+            route_templates: args.route.to_vec(),
             ..Default::default()
         };
         let imported = tungsten_contract::har::import_har(&bytes, &options, &limits)
@@ -328,7 +404,7 @@ pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> 
         output.openapi
     } else if root.get("endpoint_manifest").is_some() {
         let canonical =
-            std::fs::canonicalize(&source).map_err(|_| "cannot resolve endpoint manifest")?;
+            std::fs::canonicalize(source).map_err(|_| "cannot resolve endpoint manifest")?;
         let allowed = canonical
             .parent()
             .ok_or("endpoint manifest needs a parent directory")?
@@ -378,6 +454,9 @@ pub(super) fn import(args: &InitArgs) -> Result<Option<PreparedImport>, String> 
                 }
             }
         }
+    }
+    if let Some(report) = import_report.as_mut().filter(|_| !settings.is_empty()) {
+        report["settings"] = serde_json::Value::Object(settings);
     }
     Ok(Some(PreparedImport {
         document: converted,

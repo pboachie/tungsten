@@ -23,7 +23,7 @@ use tungsten_emit::schema::collapse_whitespace;
 use tungsten_ir::{IdempotencyKind, Operation, OperationStatus, Safety};
 use tungsten_tokens::{Counter, count};
 
-use crate::model::{MacroDocs, Model, idempotency_kind, macro_summary, method, safety, summary};
+use crate::model::{MacroDocs, Model, idempotency_kind, macro_summary, safety, summary};
 
 /// TG0713 for each tool whose `{name, description, parameters}` is over the
 /// schema budget after compaction.
@@ -137,7 +137,7 @@ pub(crate) fn description(op: &Operation) -> String {
 fn operation_meta(op: &Operation) -> Value {
     let mut meta = Map::new();
     meta.insert("operation".into(), json!(op.id.0));
-    meta.insert("method".into(), json!(method(op.method)));
+    meta.insert("method".into(), json!(op.wire_method()));
     meta.insert("path".into(), json!(op.path.raw));
     if let Some(rpc) = &op.rpc {
         meta.insert(

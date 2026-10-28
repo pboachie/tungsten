@@ -85,6 +85,9 @@ pub struct SafetyByMethod {
     pub patch: Option<Safety>,
     #[serde(default)]
     pub trace: Option<Safety>,
+    /// OpenAPI 3.2 `query` operations.
+    #[serde(default)]
+    pub query: Option<Safety>,
 }
 
 /// An idempotency policy: a policy name, or an object with details.

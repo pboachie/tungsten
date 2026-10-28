@@ -20,13 +20,19 @@ pub struct AttemptRequest<'a> {
     pub method: HttpMethod,
     pub headers: &'a [(String, String)],
     pub body: &'a Payload,
+    /// The attempt that reads a [`Payload::Upload`] body.
+    pub upload: Option<&'a crate::upload::UploadAttempt>,
     pub timeout: Duration,
     pub max_response_bytes: Option<u64>,
     /// Hand a `text/event-stream` answer with a 2xx status back unread, as
     /// [`AttemptOutcome::Streaming`]; any other answer is read as usual.
     pub stream: bool,
-    /// With `stream`: the silence after which a read of the body times out.
-    /// Default `timeout`.
+    /// Hand any 2xx answer that has a body (a download) back unread, as
+    /// [`AttemptOutcome::Streaming`], its reads still bounded by the call's
+    /// deadline.
+    pub download: bool,
+    /// With `stream` or `download`: the silence after which a read of the
+    /// body times out. Default `timeout`.
     pub idle: Option<Duration>,
 }
 
@@ -37,21 +43,42 @@ pub enum BodyRead {
     End,
     /// No bytes arrived within the attempt timeout.
     Timeout,
+    /// The deadline a download was opened with ran out.
+    Deadline,
     /// The connection failed before the stream ended.
     Lost,
 }
 
-/// The unread body of an event stream; each read waits at most the attempt
-/// timeout, so an idle stream ends with [`BodyRead::Timeout`].
+/// The unread body of an event stream or download; each read waits at most
+/// the attempt timeout, so an idle stream ends with [`BodyRead::Timeout`],
+/// and a download's reads also end at its deadline.
 #[derive(Debug)]
 pub struct EventBody {
     response: reqwest::Response,
     idle: Duration,
+    deadline: Option<Instant>,
+    /// Scheduler capacity held until the stream is dropped.
+    permit: Option<crate::scheduler::Permit>,
 }
 
 impl EventBody {
+    /// Keep `permit` until this body (the connection) is dropped.
+    pub(crate) fn hold(&mut self, permit: crate::scheduler::Permit) {
+        self.permit = Some(permit);
+    }
+
     pub async fn read(&mut self) -> BodyRead {
-        match tokio::time::timeout(self.idle, self.response.chunk()).await {
+        let now = Instant::now();
+        let idle_at = now
+            .checked_add(self.idle)
+            .unwrap_or(now + Duration::from_secs(86_400 * 365));
+        let (until, by_deadline) = match self.deadline {
+            Some(deadline) if deadline <= now => return BodyRead::Deadline,
+            Some(deadline) if deadline < idle_at => (deadline, true),
+            _ => (idle_at, false),
+        };
+        match timeout_at(until, self.response.chunk()).await {
+            Err(_) if by_deadline => BodyRead::Deadline,
             Err(_) => BodyRead::Timeout,
             Ok(Err(_)) => BodyRead::Lost,
             Ok(Ok(None)) => BodyRead::End,
@@ -92,7 +119,7 @@ pub enum AttemptOutcome {
     Streaming {
         status: u16,
         headers: BTreeMap<String, String>,
-        body: EventBody,
+        body: Box<EventBody>,
     },
     /// The request cannot have reached the server (DNS, refused, TLS).
     NotSent(String),
@@ -184,6 +211,11 @@ fn multipart_form(parts: &[MultipartPart]) -> reqwest::multipart::Form {
             PartContent::Json(text) => reqwest::multipart::Part::text(text.clone())
                 .mime_str("application/json")
                 .unwrap_or_else(|_| reqwest::multipart::Part::text(text.clone())),
+            PartContent::Typed { text, content_type } => {
+                reqwest::multipart::Part::text(text.clone())
+                    .mime_str(content_type)
+                    .unwrap_or_else(|_| reqwest::multipart::Part::text(text.clone()))
+            }
             PartContent::File {
                 data,
                 filename,
@@ -194,6 +226,20 @@ fn multipart_form(parts: &[MultipartPart]) -> reqwest::multipart::Form {
                 .unwrap_or_else(|_| {
                     reqwest::multipart::Part::bytes(data.clone()).file_name(filename.clone())
                 }),
+        };
+        let built = if part.headers.is_empty() {
+            built
+        } else {
+            let mut headers = reqwest::header::HeaderMap::new();
+            for (name, value) in &part.headers {
+                if let (Ok(name), Ok(value)) = (
+                    reqwest::header::HeaderName::from_bytes(name.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(value),
+                ) {
+                    headers.append(name, value);
+                }
+            }
+            built.headers(headers)
         };
         form = form.part(part.name.clone(), built);
     }
@@ -206,9 +252,9 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
     let mut deadline = now
         .checked_add(req.timeout)
         .unwrap_or_else(|| now + Duration::from_secs(86_400 * 365));
-    if let Some(poll_deadline) = crate::verify::poll_deadline() {
+    if let Some(poll_deadline) = crate::verify::effective_deadline() {
         if std::time::Instant::now() >= poll_deadline {
-            return AttemptOutcome::NotSent("polling deadline expired before send".to_owned());
+            return AttemptOutcome::NotSent("deadline expired before send".to_owned());
         }
         deadline = deadline.min(Instant::from_std(poll_deadline));
     }
@@ -239,6 +285,10 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
         Payload::Empty => builder,
         Payload::Bytes(bytes) => builder.body(bytes.clone()),
         Payload::Multipart(parts) => builder.multipart(multipart_form(parts)),
+        Payload::Upload(_) => match req.upload {
+            Some(upload) => builder.body(upload.body()),
+            None => return AttemptOutcome::NotSent("UPLOAD_NOT_OPENED".to_owned()),
+        },
     };
     if Instant::now() >= deadline {
         return AttemptOutcome::NotSent("request deadline expired before send".to_owned());
@@ -263,26 +313,37 @@ pub async fn attempt(client: &reqwest::Client, req: &AttemptRequest<'_>) -> Atte
             }
         }
     }
-    if req.stream && (200..=299).contains(&status) && is_event_stream(&headers) {
+    let hand_over = if req.download {
+        req.method != HttpMethod::Head && !matches!(status, 204 | 205 | 304)
+    } else {
+        req.stream && is_event_stream(&headers)
+    };
+    if hand_over && (200..=299).contains(&status) {
         return AttemptOutcome::Streaming {
             status,
             headers,
-            body: EventBody {
+            body: Box::new(EventBody {
                 response,
                 idle: req.idle.unwrap_or(req.timeout),
-            },
+                deadline: req
+                    .download
+                    .then(crate::verify::effective_deadline)
+                    .flatten()
+                    .map(Instant::from_std),
+                permit: None,
+            }),
         };
     }
-    let maximum = req
-        .max_response_bytes
-        .filter(|_| req.method != HttpMethod::Head && !matches!(status, 204 | 205 | 304));
-    let over_length = maximum.is_some_and(|limit| {
-        headers.get("content-length").is_some_and(|value| {
-            !value.is_empty()
-                && value.bytes().all(|b| b.is_ascii_digit())
-                && value.parse::<u64>().map_or(true, |length| length > limit)
-        })
-    });
+    let maximum = req.max_response_bytes;
+    let over_length = req.method != HttpMethod::Head
+        && !matches!(status, 204 | 205 | 304)
+        && maximum.is_some_and(|limit| {
+            headers.get("content-length").is_some_and(|value| {
+                !value.is_empty()
+                    && value.bytes().all(|b| b.is_ascii_digit())
+                    && value.parse::<u64>().map_or(true, |length| length > limit)
+            })
+        });
     let (body, body_failure) = if over_length {
         (None, Some(BodyFailure::Oversized))
     } else {

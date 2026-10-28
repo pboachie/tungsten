@@ -19,7 +19,7 @@ publish = ["crates-io"]
 tungsten-runtime = { path = "runtime", version = "0.1.5" }
 
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 serde_path_to_error = "0.1"
 tokio = { version = "1", default-features = false, features = ["rt", "time", "sync", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "multipart"] }
@@ -29,6 +29,8 @@ base64 = "0.23"
 regex = "1"
 url = "2"
 getrandom = "0.4"
+bytes = "1"
+http-body = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

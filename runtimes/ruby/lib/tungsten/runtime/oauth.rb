@@ -14,8 +14,12 @@ module Tungsten
     end
 
     # The default token store of the authorization-code schemes: in memory,
-    # per client. Any object with `get(scheme)`, `set(scheme, token)` and
-    # `delete(scheme)` can replace it (ClientOptions `token_store`).
+    # per client. Managed adapters must also implement set_if_current and
+    # delete_if_current. Invoke the predicate exactly once with the current
+    # token, at the final serialized mutation, with no speculative calls,
+    # retries or wait gap. It advances a session epoch. Return true only after
+    # committing; failed writes retain the old token and may conservatively
+    # invalidate older refresh work. Direct set/delete bypass managed fences.
     class MemoryTokenStore
       def initialize
         @tokens = {}
@@ -25,6 +29,36 @@ module Tungsten
       def get(scheme) = @lock.synchronize { @tokens[scheme] }
       def set(scheme, token) = @lock.synchronize { @tokens[scheme] = token }
       def delete(scheme) = @lock.synchronize { @tokens.delete(scheme) }
+
+      def set_if_current(scheme, token)
+        @lock.synchronize do
+          return false unless yield(@tokens[scheme])
+          @tokens[scheme] = token
+          true
+        end
+      end
+
+      def delete_if_current(scheme)
+        @lock.synchronize do
+          return false unless yield(@tokens[scheme])
+          @tokens.delete(scheme)
+          true
+        end
+      end
+    end
+
+    # Explicit, application-qualified issuer defense, pinned for one attempt.
+    IssuerDefense = Data.define(:mode, :value) do
+      def self.issuer_response(issuer) = new(mode: :response, value: issuer)
+      def self.distinct_redirect(qualification) = new(mode: :distinct, value: qualification)
+      def inspect = "#<Tungsten::Runtime::IssuerDefense #{REDACTED}>"
+      alias_method :to_s, :inspect
+    end
+
+    # The handle and URL are secrets of the owning listener.
+    AuthorizationAttempt = Data.define(:attempt_handle, :url, :expires_in_ms) do
+      def inspect = "#<Tungsten::Runtime::AuthorizationAttempt expires_in_ms=#{expires_in_ms}>"
+      alias_method :to_s, :inspect
     end
 
     # A PKCE pair (RFC 7636, S256); the verifier is a secret until the
@@ -53,29 +87,63 @@ module Tungsten
 
       def initialize(core, scheme)
         @core = core
-        @scheme = scheme
+        @scheme = OAuthInputs.text(scheme, OAuthInputs::INPUT_BYTES)
+      rescue StandardError
+        @scheme = nil
       end
+
+      def inspect = "#<Tungsten::Runtime::OAuthFlow #{REDACTED}>"
+      alias_method :to_s, :inspect
 
       def token_store = @core.token_store
 
-      # A fresh PKCE pair: pass `challenge` to authorization_url and keep
-      # `verifier` for exchange_code.
+      # Explicit primitive for low-level callers. Managed begin owns its pair.
       def pkce = Pkce.generate
 
-      # The URL to send the user to: Ok with the URL, or Err.
-      def authorization_url(redirect_uri: nil, scopes: nil, state: nil, code_challenge: nil, extra: {})
-        @core.send(:authorization_url, @scheme, redirect_uri: redirect_uri, scopes: scopes, state: state,
+      # Begin a managed attempt; retain its handle with the owning listener.
+      def authorization_url(session_binding: nil, s256_supported: false, issuer_defense: nil, redirect_uri: nil,
+                            scopes: nil, resource: nil, audience: nil, account_context: nil, extra: {}, **unknown)
+        unless unknown.empty?
+          return @core.oauth_sessions.error(@core.oauth_sessions.operation_scheme(@scheme), "authorizationUrl", OAuthSessions::BEGIN_REFUSAL)
+        end
+        @core.oauth_sessions.begin_authorization(@scheme, {
+          session_binding: session_binding, s256_supported: s256_supported, issuer_defense: issuer_defense,
+          redirect_uri: redirect_uri, scopes: scopes, resource: resource, audience: audience,
+          account_context: account_context, extra: extra
+        })
+      end
+
+      # Validate the whole callback and atomically claim its owning attempt.
+      def exchange_code(attempt_handle: nil, callback_url: nil, session_binding: nil, **unknown)
+        unless unknown.empty?
+          return @core.oauth_sessions.error(@core.oauth_sessions.operation_scheme(@scheme), "exchangeCode", OAuthSessions::CALLBACK_REFUSAL)
+        end
+        @core.oauth_sessions.complete(@scheme, attempt_handle, callback_url, session_binding)
+      end
+
+      def cancel_authorization(attempt_handle: nil, session_binding: nil)
+        @core.oauth_sessions.cancel(@scheme, attempt_handle, session_binding)
+      end
+
+      # Local fencing/removal only; provider revocation is separate.
+      def logout = @core.oauth_sessions.logout(@scheme)
+
+      # Deliberate escape: caller owns PKCE/state/issuer/callback/replay fences.
+      def low_level_authorization_url(redirect_uri: nil, scopes: nil, state: nil, code_challenge: nil, extra: {})
+        @core.send(:low_level_authorization_url, @scheme, redirect_uri: redirect_uri, scopes: scopes, state: state,
                                                 code_challenge: code_challenge, extra: extra)
       end
 
-      # Trade the code from the redirect for tokens, stored for later calls.
-      def exchange_code(code:, redirect_uri: nil, code_verifier: nil)
-        @core.send(:exchange_code, @scheme, code: code, redirect_uri: redirect_uri, code_verifier: code_verifier)
+      # Deliberate primitive exchange; bypasses managed attempts and store epochs.
+      def low_level_exchange_code(code:, redirect_uri: nil, code_verifier: nil)
+        @core.send(:low_level_exchange_code, @scheme, code: code, redirect_uri: redirect_uri, code_verifier: code_verifier)
       end
 
       # Refresh the stored token now (calls refresh on their own when it
       # expires).
       def refresh = @core.send(:refresh_now, @scheme)
+
+      def low_level_refresh = @core.send(:low_level_refresh_now, @scheme)
     end
 
     class ClientCore
@@ -84,10 +152,14 @@ module Tungsten
 
       # The store of authorization-code tokens.
       attr_reader :token_store
+      attr_reader :oauth_sessions, :max_oauth_token_response_bytes
 
       private
 
-      TokenFailure = Struct.new(:message, :rejected)
+      TokenFailure = Struct.new(:message, :rejected) do
+        def inspect = "#<Tungsten::Runtime::TokenFailure>"
+        alias_method :to_s, :inspect
+      end
 
       def form_body(fields) = fields.map { |k, v| "#{Serialize.percent_encode(k)}=#{Serialize.percent_encode(v)}" }.join("&")
 
@@ -122,11 +194,11 @@ module Tungsten
 
       # [token, nil] or [nil, remediation].
       def stored_token(scheme, force)
-        token, failure = stored_token_inner(scheme, force)
-        failure ? [nil, failure.message] : [token, nil]
+        token, failure = @oauth_sessions.token(scheme, force)
+        failure ? [nil, failure.message] : [token&.access_token, nil]
       end
 
-      def stored_token_inner(scheme, force)
+      def low_level_stored_token_inner(scheme, force)
         missing = TokenFailure.new(
           "No OAuth2 token is stored for #{scheme}; send the user to authorization_url(), then call exchange_code() " \
           "with the code, or put a token in ClientOptions.token_store.", false
@@ -147,7 +219,7 @@ module Tungsten
           current = read_token(scheme)
           return [nil, missing] unless current
 
-          token, failure = refresh_stored(scheme, current, force)
+          token, failure = low_level_refresh_stored(scheme, current, force)
           return [nil, failure] if failure
 
           @lock.synchronize { gate[:generation] += 1 }
@@ -158,16 +230,11 @@ module Tungsten
       # The refreshed token after a 401 when the stored token has a refresh
       # token, else nil.
       def refresh_after_rejection(scheme, rejected)
-        stored = read_token(scheme)
-        return nil unless stored
-        return stored.access_token if stored.access_token != rejected
-        return nil if stored.refresh_token.to_s.empty?
-
-        token, problem = stored_token(scheme, true)
-        problem ? nil : token
+        stored, problem = @oauth_sessions.token(scheme, true, rejected: rejected)
+        problem ? nil : stored&.access_token
       end
 
-      def refresh_stored(scheme, stored, force)
+      def low_level_refresh_stored(scheme, stored, force)
         flow, reason = code_flow(scheme)
         return [nil, TokenFailure.new("Cannot refresh the OAuth2 token for #{scheme}: #{reason}.", false)] unless flow
 
@@ -190,7 +257,15 @@ module Tungsten
 
       def token_timeout_ms = [@timeout_ms, 1].max
 
-      def token_request(scheme, url, client, fields, previous)
+      def token_request(_scheme, url, client, fields, previous, deadline: nil)
+        limit = @max_oauth_token_response_bytes
+        unless OAuthInputs.safe_integer?(limit) && OAuthInputs.safe_integer?(token_timeout_ms)
+          return [nil, TokenFailure.new("OAuth token byte and time limits must be positive safe integers; nothing was sent.", false)]
+        end
+        managed = !deadline.nil?
+        deadline ||= Transport.monotonic_ms + token_timeout_ms
+        OAuthInputs.endpoint(url) if managed
+        return [nil, TokenFailure.new(INSECURE_HTTP_AUTH, false)] if insecure_http?(url)
         headers = [["Content-Type", "application/x-www-form-urlencoded"], ["Accept", "application/json"]]
         all = fields.dup
         if client[:secret].empty?
@@ -200,36 +275,52 @@ module Tungsten
           headers << ["Authorization", "Basic #{basic}"]
         end
         body = Serialize::Encoded.new(empty: false, bytes: form_body(all).b, parts: nil, content_type: nil, display: nil, hashed: nil)
-        out = Transport.attempt(url: url.to_s, method: "POST", headers: headers, body: body, timeout_ms: token_timeout_ms)
-        unless out.kind == :response && out.body
-          return [nil, TokenFailure.new("The OAuth2 token endpoint for #{scheme} could not be reached; check network access and the token URL.", false)]
+        remaining = deadline - Transport.monotonic_ms
+        return [nil, TokenFailure.new(OAuthSessions::SESSION_REFUSAL, false)] unless remaining.positive?
+        out = Transport.attempt(url: url.to_s, method: "POST", headers: headers, body: body,
+                                timeout_ms: [token_timeout_ms, remaining].min, max_response_bytes: limit)
+        if Transport.monotonic_ms >= deadline
+          return [nil, TokenFailure.new(OAuthSessions::SESSION_REFUSAL, false)]
+        end
+        unless out.kind == :response && out.body.is_a?(String) && out.body.bytesize <= limit
+          return [nil, TokenFailure.new("The OAuth token response was unavailable, incomplete or exceeded its byte limit; begin a new attempt if a code may have been sent.", false)]
         end
 
         decoded = Classify.decode_body(out.body, out.headers, "application/json")
+        if Transport.monotonic_ms >= deadline
+          return [nil, TokenFailure.new(OAuthSessions::SESSION_REFUSAL, false)]
+        end
         unless out.status.between?(200, 299)
           code = Util.get_path_str(decoded.value, "error")
-          named = code.is_a?(String) && code.match?(/\A[a-z_]{1,40}\z/) ? " (#{code})" : ""
+          known = %w[invalid_request invalid_client invalid_grant unauthorized_client unsupported_grant_type invalid_scope
+                     access_denied temporarily_unavailable server_error]
+          named = known.include?(code) ? " (#{code})" : ""
           return [nil, TokenFailure.new(
-            "The OAuth2 token endpoint for #{scheme} answered HTTP #{out.status}#{named}; check the code or refresh token, client credentials and redirect URI.",
+            "The OAuth token endpoint refused the request#{named}; check client configuration and begin a new authorization if needed.",
             out.status.between?(400, 499)
           )]
         end
         text = ->(path) { Util.get_path_str(decoded.value, path).then { |v| v.is_a?(String) ? v : "" } }
         access = text.call("access_token")
-        return [nil, TokenFailure.new("The OAuth2 token endpoint for #{scheme} returned no access_token.", false)] if access.empty?
+        return [nil, TokenFailure.new("The OAuth token endpoint returned no access_token.", false)] if access.empty?
 
         refresh = text.call("refresh_token")
         refresh = previous if refresh.empty?
         expires_in = Util.get_path_str(decoded.value, "expires_in")
         expires = expires_in.is_a?(Numeric) && expires_in.finite? ? now + ([expires_in, 0].max * 1000).to_i : nil
-        token = StoredToken.new(access_token: access, refresh_token: refresh.empty? ? nil : refresh, expires_at: expires,
-                                token_type: text.call("token_type"), scope: text.call("scope"))
+        token = StoredToken.new(access_token: OAuthInputs.text(access, limit),
+                                refresh_token: refresh.empty? ? nil : OAuthInputs.text(refresh, limit), expires_at: expires,
+                                token_type: OAuthInputs.text(text.call("token_type"), limit), scope: OAuthInputs.text(text.call("scope"), limit))
+        return [nil, TokenFailure.new(OAuthSessions::SESSION_REFUSAL, false)] if Transport.monotonic_ms >= deadline
         [token, nil]
+      rescue StandardError
+        [nil, TokenFailure.new("The OAuth token request could not complete; check local configuration and begin a new authorization if needed.", false)]
       end
 
       # An OAuth2 client-credentials token, fetched once per scheme and
       # cached until 30 s before it expires (one request at a time).
       def client_credentials_token(sat)
+        return [nil, INSECURE_HTTP_AUTH] if insecure_http?(sat.token_url)
         @cc_lock.synchronize do
           real_now = (Time.now.to_f * 1000).to_i
           cached = @cc_tokens[sat.name]
@@ -262,7 +353,7 @@ module Tungsten
 
       def oauth_operation(scheme, helper) = "oauth.#{scheme}.#{helper}"
 
-      def authorization_url(scheme, redirect_uri:, scopes:, state:, code_challenge:, extra:)
+      def low_level_authorization_url(scheme, redirect_uri:, scopes:, state:, code_challenge:, extra:)
         operation = oauth_operation(scheme, "authorizationUrl")
         flow, reason = code_flow(scheme)
         return oauth_error(operation, "Cannot build an authorization URL: #{reason}.") unless flow
@@ -287,7 +378,7 @@ module Tungsten
         Ok.new(value: base + sep + form_body(fields), meta: ResponseMeta.local)
       end
 
-      def exchange_code(scheme, code:, redirect_uri:, code_verifier:)
+      def low_level_exchange_code(scheme, code:, redirect_uri:, code_verifier:)
         operation = oauth_operation(scheme, "exchangeCode")
         flow, reason = code_flow(scheme)
         return oauth_error(operation, "Cannot exchange the code: #{reason}.") unless flow
@@ -311,8 +402,14 @@ module Tungsten
       end
 
       def refresh_now(scheme)
+        stored, failure = @oauth_sessions.token(scheme, true)
+        return @oauth_sessions.error(@oauth_sessions.operation_scheme(scheme), "refresh", failure.message) if failure
+        Ok.new(value: token_info(scheme, stored), meta: ResponseMeta.local)
+      end
+
+      def low_level_refresh_now(scheme)
         operation = oauth_operation(scheme, "refresh")
-        _, failure = stored_token_inner(scheme, true)
+        _, failure = low_level_stored_token_inner(scheme, true)
         return oauth_error(operation, failure.message) if failure
 
         stored = read_token(scheme)

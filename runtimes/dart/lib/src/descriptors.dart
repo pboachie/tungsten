@@ -63,6 +63,7 @@ final class BodyDescriptor {
     required this.required,
     required this.fields,
     required this.arg,
+    this.partContentTypes = const {},
   });
 
   /// The media type.
@@ -79,6 +80,10 @@ final class BodyDescriptor {
 
   /// The argument that is the whole body.
   final String? arg;
+
+  /// The media type each multipart field's parts are sent with (OpenAPI
+  /// `encoding`), by wire name; a file part's own media type wins.
+  final Map<String, String> partContentTypes;
 }
 
 /// A declared response: [status] an int, `"4XX"` or `"default"`.
@@ -147,6 +152,7 @@ final class OperationDescriptor {
             Schema(_map(_map(s)['event']), defs),
             _map(s)['done'] as String?,
             _map(s)['flag'] as String?,
+            _map(s)['text'] == true,
           )
         : null;
   }
@@ -271,12 +277,19 @@ final class OperationDescriptor {
       arg = _str(shape['name'] ?? shape['arg']);
       keyNames[_str(shape['arg'])] = arg;
     }
+    final partTypes = <String, String>{};
+    for (final part in _list(b['parts'])) {
+      final m = _map(part);
+      final type = m['content_type'];
+      if (type is String) partTypes.putIfAbsent(_str(m['name']), () => type);
+    }
     return BodyDescriptor._(
       mediaType: _str(b['media_type']),
       encoding: b['encoding'] is String ? b['encoding']! as String : 'json',
       required: b['required'] == true,
       fields: fields,
       arg: arg,
+      partContentTypes: Map.unmodifiable(partTypes),
     );
   }
 
@@ -326,7 +339,7 @@ final class OperationDescriptor {
 /// The event stream of an operation: the validator of each event's data,
 /// the data that ends the stream and the argument that asks for it.
 final class StreamDescriptor {
-  const StreamDescriptor._(this.event, this.done, this.flag);
+  const StreamDescriptor._(this.event, this.done, this.flag, this.text);
 
   /// The validator of each event's data.
   final Schema event;
@@ -336,6 +349,9 @@ final class StreamDescriptor {
 
   /// The argument set to true to ask for the stream, when there is one.
   final String? flag;
+
+  /// Whether every event's data is text delivered as written, not JSON.
+  final bool text;
 }
 
 /// A macro in the canonical form, from the SDK descriptor document.

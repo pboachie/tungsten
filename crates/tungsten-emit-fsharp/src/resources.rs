@@ -13,15 +13,20 @@
 //! live in the root namespace before their class (F# has no nested types
 //! in classes), named `<Class><Member>Request`; their `FromJson` decodes
 //! strictly (unknown keys refused) and their `ToJson` writes the
-//! TypeScript arguments layout, keyed by arguments key.
+//! TypeScript arguments layout, keyed by arguments key. An operation whose
+//! success bodies differ by status has a union of its answers
+//! (`<Class><Member>Response`, one `Status<code>` case per status) declared
+//! the same way; the internal twin decodes the body by the HTTP status of
+//! the response.
 
 use tungsten_emit::Writer;
-use tungsten_emit::sdk::{ArgSource, ClientPlan, MemberKind, OpPlan, SuccessPlan};
-use tungsten_ir::{BodyEncoding, Doc, Presence, TypeRef};
+use tungsten_emit::sdk::{ArgSource, ClientPlan, MemberKind, OpPlan, StatusBody, SuccessPlan};
+use tungsten_ir::{BodyEncoding, Doc, Presence, StatusMatch, TypeRef};
 
 use crate::Ctx;
 use crate::fs::{self, lit};
 use crate::typeref::{self, Fk, Ft};
+use crate::types::{dec_call, enc_call};
 
 /// The text of a documentation entry (summary and description).
 pub fn doc_text(doc: Option<&Doc>) -> String {
@@ -224,6 +229,16 @@ impl Request {
     }
 }
 
+/// The answers of an operation whose success bodies differ by status: a
+/// union with one case per status.
+#[derive(Debug)]
+pub struct ByStatus {
+    /// The union's name (declared in the root namespace).
+    pub name: String,
+    /// Per success status, the type of its body (none: no body).
+    pub cases: Vec<(u16, Option<Ft>)>,
+}
+
 /// What the methods of one operation are made of.
 #[derive(Debug)]
 pub struct OpInfo {
@@ -239,6 +254,8 @@ pub struct OpInfo {
     pub result: Ft,
     /// No success body at all (`Result<unit, Diagnostic>`).
     pub no_content: bool,
+    /// The success bodies differ by status: the typed answers.
+    pub by_status: Option<ByStatus>,
     pub item: Ft,
     pub event: Ft,
 }
@@ -336,7 +353,25 @@ impl Ctx<'_> {
                 .collect();
             let request =
                 Self::request(fields, format!("{}{member}Request", res.class), &mut taken);
-            let (result, no_content) = self.success_ft(p);
+            let (mut result, no_content) = self.success_ft(p);
+            let by_status = match &p.success {
+                SuccessPlan::ByStatus(list) => {
+                    let name = fs::unique(format!("{}{member}Response", res.class), &mut taken);
+                    let cases = list
+                        .iter()
+                        .filter_map(|(status, body)| match (status, body) {
+                            (StatusMatch::Exact(code), StatusBody::Empty) => Some((*code, None)),
+                            (StatusMatch::Exact(code), StatusBody::Json(ty)) => {
+                                Some((*code, Some(self.ft(ty, None))))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    result = Ft::of(Fk::Named(name.clone()));
+                    Some(ByStatus { name, cases })
+                }
+                _ => None,
+            };
             let item = p
                 .page
                 .as_ref()
@@ -360,6 +395,7 @@ impl Ctx<'_> {
                 request,
                 result,
                 no_content,
+                by_status,
                 item,
                 event,
             });
@@ -394,6 +430,90 @@ impl Ctx<'_> {
         } else {
             (ft, false)
         }
+    }
+
+    /// The answers of an operation whose success bodies differ by status:
+    /// a union with one case per status (`Status<code>`), and
+    /// `FromJson(status, body, decoder)` choosing the case by the HTTP
+    /// status of the response.
+    fn answers_union(w: &mut Writer, operation: &str, answers: &ByStatus) {
+        let name = &answers.name;
+        let codes: Vec<String> = answers.cases.iter().map(|(c, _)| c.to_string()).collect();
+        fs::doc_line(
+            w,
+            &format!(
+                "The success answers of {operation}: one case per status ({}).",
+                codes.join(", ")
+            ),
+        );
+        w.line("[<RequireQualifiedAccess>]");
+        w.line(format!("type {name} ="));
+        w.indent();
+        for (code, ft) in &answers.cases {
+            match ft {
+                Some(ft) => {
+                    fs::doc_line(w, &format!("The answer with status {code}."));
+                    w.line(format!("| Status{code} of {}", ft.ty()));
+                }
+                None => {
+                    fs::doc_line(
+                        w,
+                        &format!("The answer with status {code}, without a body."),
+                    );
+                    w.line(format!("| Status{code}"));
+                }
+            }
+        }
+        w.blank();
+        fs::doc_line(w, "The HTTP status of the answer.");
+        w.line("member this.Status : int =");
+        w.indent();
+        w.line("match this with");
+        for (code, ft) in &answers.cases {
+            let wild = if ft.is_some() { " _" } else { "" };
+            w.line(format!("| {name}.Status{code}{wild} -> {code}"));
+        }
+        w.dedent();
+        w.blank();
+        fs::doc_line(w, "The body as JSON (null when the answer has none).");
+        w.line("member this.ToJson() : JsonNode =");
+        w.indent();
+        w.line("match this with");
+        for (code, ft) in &answers.cases {
+            match ft {
+                Some(ft) => w.line(format!(
+                    "| {name}.Status{code} value -> {}",
+                    enc_call(ft, "value")
+                )),
+                None => w.line(format!("| {name}.Status{code} -> null")),
+            };
+        }
+        w.dedent();
+        w.blank();
+        fs::doc_line(
+            w,
+            "Decodes the body of the response with this HTTP status into its case.",
+        );
+        w.line(format!(
+            "static member FromJson(status: int, node: JsonNode, d: Decoder) : {name} ="
+        ));
+        w.indent();
+        w.line("match status with");
+        for (code, ft) in &answers.cases {
+            match ft {
+                Some(ft) => w.line(format!(
+                    "| {code} -> {name}.Status{code}({})",
+                    dec_call(ft, "node", "d")
+                )),
+                None => w.line(format!("| {code} -> {name}.Status{code}")),
+            };
+        }
+        w.line(format!(
+            "| other -> raise (DecodeException(Array.empty<obj>, sprintf \"the status %d is none of {}\" other))",
+            codes.join(", ")
+        ));
+        w.dedent();
+        w.dedent();
     }
 
     /// A record of arguments: fields, a strict-capable `FromJson`, `ToJson`
@@ -515,6 +635,10 @@ impl Ctx<'_> {
             for m in &names.members {
                 if let MemberKind::Operation(i) = m.kind {
                     let info = &infos[i];
+                    if let Some(answers) = &info.by_status {
+                        Self::answers_union(&mut w, &self.plan.operations[i].op.id.0, answers);
+                        w.blank();
+                    }
                     Self::args_record(
                         &mut w,
                         &format!(
@@ -605,7 +729,34 @@ impl Ctx<'_> {
         };
         let call = internal(&info.member);
         w.blank();
-        if info.no_content {
+        if let Some(answers) = &info.by_status {
+            let ty = &answers.name;
+            w.line(format!(
+                "member internal _.{call}({internal_param}{internal_tail}) : Task<Result<{ty}>> ="
+            ));
+            w.line("    task {");
+            w.line(format!(
+                "        let! result = core.CallAsync({field}, {args}, Interop.orNull options, Interop.token cancellationToken)"
+            ));
+            w.line("        let status =");
+            w.line("            match result with");
+            w.line("            | :? Result<JsonNode>.Ok as ok -> ok.Meta.Status");
+            w.line("            | _ -> 0");
+            w.blank();
+            w.line(format!(
+                "        return Typed.Decode({field}.Id, result, System.Func<JsonNode, Decoder, {ty}>(fun n d -> {ty}.FromJson(status, n, d)))"
+            ));
+            w.line("    }");
+            w.blank();
+            fs::doc_line(w, &doc);
+            w.line(format!(
+                "member this.{}Async({param}{tail}) : Task<Result<{ty}, Diagnostic>> =",
+                info.member
+            ));
+            w.line(format!(
+                "    this.{call}({pass}options, cancellationToken) |> TaskResult.toResult"
+            ));
+        } else if info.no_content {
             w.line(format!(
                 "member internal _.{call}({internal_param}{internal_tail}) : Task<Result<NoContent>> ="
             ));

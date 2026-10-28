@@ -77,7 +77,7 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 use tungsten_ir::naming::{self, Role, Target};
 use tungsten_ir::{
-    ApiKeyIn, AuthScheme, BodyEncoding, CompositePart, HttpMethod, IdempotencyKind, Ident, Jitter,
+    ApiKeyIn, AuthScheme, BodyEncoding, CompositePart, IdempotencyKind, Ident, Jitter,
     OperationAgentMeta, OperationStatus, PaginationStyle, ParamRole, ParamStyle, PreviewMode,
     Remediation, ResponseKind, RetryPolicy, Retryable, Safety, Shape, StatusMatch, TypeId, TypeRef,
 };
@@ -316,6 +316,30 @@ pub struct BodyDescriptor {
     pub encoding: String,
     pub required: bool,
     pub shape: BodyShapeDescriptor,
+    /// The per-part encoding of a multipart body, by wire field name
+    /// (OpenAPI `encoding`); absent when no field declares one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<PartDescriptor>,
+}
+
+/// The declared encoding of one multipart field: `content_type` is the media
+/// type each part of the field is sent with, unless a file part carries its
+/// own.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct PartDescriptor {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    /// Headers with a fixed value sent on each part of the field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<PartHeaderDescriptor>,
+}
+
+/// A header with a fixed value on a multipart part.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct PartHeaderDescriptor {
+    pub name: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
@@ -461,6 +485,9 @@ pub struct StreamDescriptor {
     pub done: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flag: Option<String>,
+    /// Every event's `data` is text delivered as written, not JSON.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub text: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
@@ -719,20 +746,6 @@ fn remediation(r: &Remediation) -> RemediationEntry {
     }
 }
 
-/// The wire spelling of an HTTP method.
-pub fn method_str(m: HttpMethod) -> &'static str {
-    match m {
-        HttpMethod::Get => "GET",
-        HttpMethod::Put => "PUT",
-        HttpMethod::Post => "POST",
-        HttpMethod::Delete => "DELETE",
-        HttpMethod::Options => "OPTIONS",
-        HttpMethod::Head => "HEAD",
-        HttpMethod::Patch => "PATCH",
-        HttpMethod::Trace => "TRACE",
-    }
-}
-
 /// The contract spelling of a safety tier.
 pub fn safety_str(s: Safety) -> &'static str {
     match s {
@@ -772,6 +785,7 @@ fn style_str(s: ParamStyle) -> &'static str {
         ParamStyle::SpaceDelimited => "space_delimited",
         ParamStyle::PipeDelimited => "pipe_delimited",
         ParamStyle::DeepObject => "deep_object",
+        ParamStyle::Cookie => "cookie",
     }
 }
 
@@ -874,6 +888,22 @@ fn operation(
             encoding: encoding_str(content.encoding).to_string(),
             required: p.layout.body_required,
             shape,
+            parts: content
+                .parts
+                .iter()
+                .map(|part| PartDescriptor {
+                    name: part.name.clone(),
+                    content_type: part.content_type.clone(),
+                    headers: part
+                        .headers
+                        .iter()
+                        .map(|h| PartHeaderDescriptor {
+                            name: h.name.clone(),
+                            value: h.value.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
         }
     });
     let responses = op
@@ -920,7 +950,7 @@ fn operation(
     let summary = op_summary(op);
     OperationDescriptor {
         id: op.id.0.clone(),
-        method: method_str(op.method).to_string(),
+        method: op.wire_method().to_string(),
         path: op.path.raw.clone(),
         params,
         body,
@@ -947,6 +977,7 @@ fn operation(
             event: schemas.type_ref(&s.event),
             done: s.done.clone(),
             flag: s.flag.clone(),
+            text: s.text,
         }),
         summary: (!summary.is_empty()).then_some(summary),
     }

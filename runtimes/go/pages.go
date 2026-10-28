@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"time"
 )
 
 type pageState struct {
@@ -47,6 +48,8 @@ type Pages struct {
 	state *pageState
 	page  *Response[Page[any]]
 	err   *Error
+	// deadline bounds the whole traversal; zero means none.
+	deadline time.Time
 }
 
 // Next fetches the next page; false after the last page or an error.
@@ -55,6 +58,8 @@ func (p *Pages) Next(ctx context.Context) bool {
 	if p.err != nil {
 		return false
 	}
+	ctx, cancel := boundBy(ctx, p.deadline)
+	defer cancel()
 	page, err, more := p.core.pageStep(ctx, p.op, p.state, p.opts, nil)
 	if err != nil {
 		p.err = err
@@ -279,8 +284,13 @@ func (c *ClientCore) checkItems(op *OperationDescriptor, itemsField string, item
 	if op.PageItem == nil || mode == ValidateOff {
 		return nil
 	}
+	seen := map[string]bool{}
 	for index, item := range items {
-		issues := judge(op.PageItem, item)
+		root := "response"
+		if itemsField != "" {
+			root += "." + itemsField
+		}
+		issues := c.judge(op.ID, root+fmt.Sprintf("[%d]", index), op.PageItem, item, seen)
 		if len(issues) == 0 {
 			continue
 		}

@@ -45,6 +45,8 @@ public sealed record BodyDescriptor
     /// <summary>The arguments key of a whole-body argument; null for a merged body.</summary>
     public string? Arg { get; init; }
     public string? ArgName { get; init; }
+    /// <summary>The media type each multipart field's parts are sent with (OpenAPI <c>encoding</c>), by wire name; a file part's own media type wins.</summary>
+    public IReadOnlyDictionary<string, string> PartContentTypes { get; init; } = new Dictionary<string, string>();
 }
 
 /// <summary>One declared response.</summary>
@@ -135,6 +137,26 @@ public sealed record AgentMeta
     /// <summary>Dotted argument paths (arguments keys).</summary>
     public IReadOnlyList<string> SensitiveRequestFields { get; init; } = System.Array.Empty<string>();
     public bool ShownOnce { get; init; }
+    /// <summary>The review policy of an operation imported from a collection or capture, or null.</summary>
+    public ImportPolicy? ImportPolicy { get; init; }
+}
+
+/// <summary>
+/// The review policy of an operation imported from a Postman collection, cURL
+/// command, HTTP request file or HAR capture. A reviewed operation may be sent
+/// only to one of its allowed origins; an unreviewed one carries an effective
+/// safety tier that requires preview and confirmation.
+/// </summary>
+public sealed record ImportPolicy
+{
+    /// <summary>The origins (scheme, host, port) the review covers.</summary>
+    public IReadOnlyList<string> AllowedOrigins { get; init; } = System.Array.Empty<string>();
+    /// <summary>The tier inferred from the HTTP method.</summary>
+    public Safety InferredSafety { get; init; } = Safety.Irreversible;
+    /// <summary>Whether a person reviewed the operation.</summary>
+    public bool Reviewed { get; init; }
+    /// <summary>The kind of input the operation came from.</summary>
+    public string Source { get; init; } = "";
 }
 
 /// <summary>A runtime gate: the operation is mounted only when EnvVar is on.</summary>
@@ -158,6 +180,8 @@ public sealed record StreamDescriptor
     public string? Done { get; init; }
     /// <summary>The wire name of the boolean body field that selects the stream.</summary>
     public string? Flag { get; init; }
+    /// <summary>Every event's data is text delivered as written, not JSON.</summary>
+    public bool Text { get; init; }
 }
 
 /// <summary>Everything the runtime needs to call one operation.</summary>
@@ -533,8 +557,18 @@ public sealed class SdkDescriptors
         {
             var shape = Obj(b["shape"]);
             bool merged = Str(shape["kind"]) == "merged";
+            var partTypes = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var part in Arr(b["parts"]))
+            {
+                var po = Obj(part);
+                if (Str(po["content_type"]) is { } partType)
+                {
+                    partTypes.TryAdd(Str(po["name"]) ?? "", partType);
+                }
+            }
             body = new BodyDescriptor
             {
+                PartContentTypes = partTypes,
                 MediaType = Str(b["media_type"]) ?? "application/json",
                 Encoding = Str(b["encoding"]) ?? "json",
                 Required = Bool(b["required"]),
@@ -621,6 +655,7 @@ public sealed class SdkDescriptors
                 Event = st.ContainsKey("event") ? Schema.FromJson(st["event"], defs) : null,
                 Done = Str(st["done"]),
                 Flag = Str(st["flag"]),
+                Text = Bool(st["text"]),
             };
         }
         return new OperationDescriptor
@@ -673,12 +708,29 @@ public sealed class SdkDescriptors
                 SensitiveResponseFields = Strings(agent["sensitive_response_fields"]),
                 SensitiveRequestFields = sensitiveRequest,
                 ShownOnce = Bool(agent["shown_once"]),
+                ImportPolicy = ReadImportPolicy(agent["import_policy"]),
             },
             Request = o.ContainsKey("request") ? Schema.FromJson(o["request"], defs) : null,
             Response = o.ContainsKey("response") ? Schema.FromJson(o["response"], defs) : null,
             PageItem = o.ContainsKey("page_item") ? Schema.FromJson(o["page_item"], defs) : null,
             Stream = stream,
             Summary = Str(o["summary"]),
+        };
+    }
+
+    private static ImportPolicy? ReadImportPolicy(JsonNode? raw)
+    {
+        if (raw is not JsonObject p)
+        {
+            return null;
+        }
+        // Only a literal true counts as reviewed; anything else fails closed.
+        return new ImportPolicy
+        {
+            AllowedOrigins = Strings(p["allowed_origins"]),
+            InferredSafety = Wire.ParseSafety(Str(p["inferred_safety"])) ?? Safety.Irreversible,
+            Reviewed = Bool(p["reviewed"]),
+            Source = Str(p["source"]) ?? "",
         };
     }
 

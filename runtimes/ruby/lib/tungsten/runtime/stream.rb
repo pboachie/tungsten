@@ -278,7 +278,7 @@ module Tungsten
           return FailedStream.new(Runtime.diag(d.id, "VALIDATION_FAILED").param("opts").expected("call options")
                                          .remedy("Pass the call options as a Hash of idempotency_key, confirm, timeout_ms, verify and headers (#{e.message}).").err)
         end
-        EventStream.new(self, d, args, o, decode)
+        EventStream.new(self, d, args, with_call_deadline(o), decode)
       end
 
       # A stream that fails before it starts.
@@ -463,14 +463,14 @@ module Tungsten
           Err.new(error: Util.scrub_diagnostic(b.status(o.meta.status).request_id(o.meta.request_id).retrying("never")
                                                  .attempts(o.meta.attempts).build, o.secrets))
         end
-        value = Json.try_parse(ev.data)
+        value = op.stream["text"] ? ev.data : Json.try_parse(ev.data)
         if UNSET.equal?(value)
           return failure.call(Runtime.diag(op.id, "UNEXPECTED_RESPONSE").param("events[#{index}]")
                                      .received(Util.envelope_value(ev.data, false)).expected("JSON in the data of every event")
                                      .remedy("Event #{index} of the stream (event \"#{ev.event}\") does not carry JSON in its data.#{after_effect} Events before it were delivered."))
         end
         if @validate_responses != "off" && op.stream["event"]
-          issues = judge(op.stream["event"], value)
+          issues = judge(op.stream["event"], value, op.id, "events[#{index}]")
           unless issues.empty?
             issue = issues.first
             path_text = Runtime.issue_path(issue.path)

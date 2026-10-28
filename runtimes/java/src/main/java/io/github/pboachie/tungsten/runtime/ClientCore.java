@@ -35,6 +35,8 @@ public final class ClientCore {
     final Map<String, String> headers;
     final String baseUrl;
     final Duration timeout;
+    /** The client's total call deadline, or null. */
+    final Duration deadline;
     final int maxEventBytes;
     final int maxCollectBytes;
     final Duration maxCollectTime;
@@ -53,6 +55,9 @@ public final class ClientCore {
 
     /** Generated clients call this when their manifest forbids redirects. */
     public static void requireRedirectPolicyV1() {}
+
+    /** Generated clients call this when an operation carries an imported-operation policy. */
+    public static void requireImportPolicyV1() {}
     final TokenStore tokenStore;
     final RuntimeIdentity identity;
     final Auth authResolver;
@@ -88,6 +93,7 @@ public final class ClientCore {
         }
         this.baseUrl = base == null ? "" : base;
         this.timeout = options.timeout;
+        this.deadline = options.deadline;
         this.maxEventBytes = options.maxEventBytes;
         this.maxCollectBytes = options.maxCollectBytes;
         this.maxCollectTime = options.maxCollectTime;
@@ -153,7 +159,7 @@ public final class ClientCore {
      */
     public Result<Object> call(OperationDescriptor op, Object args, CallOptions opts) {
         try {
-            return callWith(op, args, opts, null, null);
+            return Deadline.within(Deadline.resolve(deadline, opts), () -> callWith(op, args, opts, null, null));
         } catch (TungstenException e) {
             return e.toResult();
         }
@@ -166,7 +172,7 @@ public final class ClientCore {
      */
     public Result<PreviewResult> preview(OperationDescriptor op, Object args, CallOptions opts) {
         try {
-            return Previews.preview(this, op, args, opts);
+            return Deadline.within(Deadline.resolve(deadline, opts), () -> Previews.preview(this, op, args, opts));
         } catch (TungstenException e) {
             return e.toResult();
         }
@@ -184,7 +190,7 @@ public final class ClientCore {
     public Result<Polled> poll(OperationDescriptor op, Object args, Object until, Duration interval,
             Duration budget, CallOptions opts) {
         try {
-            return Previews.poll(this, op, args, until, interval, budget, opts, null);
+            return Deadline.within(Deadline.resolve(deadline, opts), () -> Previews.poll(this, op, args, until, interval, budget, opts, null));
         } catch (TungstenException e) {
             return e.toResult();
         }
@@ -196,7 +202,7 @@ public final class ClientCore {
      */
     public Result<Object> runMacro(MacroDescriptor m, Object input, CallOptions opts) {
         try {
-            return Macros.run(this, m, input, opts);
+            return Deadline.within(Deadline.resolve(deadline, opts), () -> Macros.run(this, m, input, opts));
         } catch (TungstenException e) {
             return e.toResult();
         }
@@ -205,7 +211,7 @@ public final class ClientCore {
     /** Previews a macro without sending anything. */
     public Result<PreviewResult> previewMacro(MacroDescriptor m, Object input, CallOptions opts) {
         try {
-            return Macros.preview(this, m, input, opts);
+            return Deadline.within(Deadline.resolve(deadline, opts), () -> Macros.preview(this, m, input, opts));
         } catch (TungstenException e) {
             return e.toResult();
         }
@@ -276,6 +282,46 @@ public final class ClientCore {
                     && u.getRawUserInfo() == null;
         } catch (URISyntaxException e) {
             return false;
+        }
+    }
+
+    /**
+     * The origin (scheme, host and port) of an absolute http(s) URL without
+     * credentials, or null.
+     */
+    static String origin(String text) {
+        if (text == null || !validUrl(text)) {
+            return null;
+        }
+        URI u = URI.create(text);
+        String scheme = u.getScheme().toLowerCase(Locale.ROOT);
+        int port = u.getPort() >= 0 ? u.getPort() : scheme.equals("https") ? 443 : 80;
+        return scheme + "://" + u.getHost().toLowerCase(Locale.ROOT) + ":" + port;
+    }
+
+    /**
+     * Refuses a reviewed imported operation whose target lies outside the
+     * origins its review covers. A malformed or missing scope fails closed.
+     */
+    private void checkImportScope(OperationDescriptor op, String target) {
+        OperationDescriptor.ImportPolicy policy = op.agent().importPolicy();
+        if (policy == null || !policy.reviewed()) {
+            return;
+        }
+        String actual = origin(target);
+        boolean allowed = false;
+        if (actual != null && policy.allowedOrigins() != null) {
+            for (String scope : policy.allowedOrigins()) {
+                if (actual.equals(origin(scope))) {
+                    allowed = true;
+                    break;
+                }
+            }
+        }
+        if (!allowed) {
+            throw diag(op.id(), Category.VALIDATION_FAILED).param(identity.baseUrl()).retry(Retryable.NEVER)
+                    .remedy("The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.")
+                    .fail();
         }
     }
 
@@ -420,7 +466,9 @@ public final class ClientCore {
         if (op.request() != null) {
             List<Schema.Issue> issues;
             try {
-                issues = op.request().validate(args);
+                List<Schema.PatternNote> notes = new ArrayList<>();
+                issues = op.request().validate(args, notes);
+                reportUnchecked(op.id(), Category.VALIDATION_FAILED, notes, p -> Args.argumentPath(op, p), null);
             } catch (RuntimeException e) {
                 throw diag(op.id(), Category.UNEXPECTED_RESPONSE).retry(Retryable.NEVER)
                         .remedy("The SDK failed while building or sending the request (the request validator panicked). This is a bug in the generated SDK or the runtime; report it. Nothing was sent.")
@@ -674,6 +722,9 @@ public final class ClientCore {
                     } catch (RuntimeException e) {
                         throw storeFailure(op, "the store threw " + e.getClass().getSimpleName());
                     }
+                    if (Deadline.expired()) {
+                        throw Deadline.failure(this, op.id(), "while reserving an idempotency key");
+                    }
                     if (key == null || key.isEmpty()) {
                         throw storeFailure(op, "the store returned no key");
                     }
@@ -787,6 +838,16 @@ public final class ClientCore {
         return converted instanceof JsonObject ? (JsonObject) converted : null;
     }
 
+    private long responseLimit(OperationDescriptor op, CallOptions opts) {
+        Long configured = opts.maxResponseBytes() != null ? opts.maxResponseBytes() : options.maxResponseBytes;
+        long cap = configured == null ? 4 * 1024 * 1024 : configured;
+        if (cap < 1 || cap > 9_007_199_254_740_991L) {
+            throw diag(op.id(), Category.VALIDATION_FAILED).param("maxResponseBytes")
+                    .remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").fail();
+        }
+        return cap;
+    }
+
     Prepared prepare(OperationDescriptor op, Object rawArgs, CallOptions opts, Purpose p, String urlOverride, MacroClaim claim) {
         if (op == null) {
             throw diag("<unknown operation>", Category.VALIDATION_FAILED).param("operation")
@@ -794,6 +855,7 @@ public final class ClientCore {
                     .remedy("The operation descriptor is invalid: the descriptor is missing. Regenerate the SDK or fix the descriptor; nothing was sent.")
                     .fail();
         }
+        responseLimit(op, opts);
         String problem = Args.descriptorProblem(op);
         if (problem != null) {
             throw diag(op.id() == null || op.id().isEmpty() ? "<unknown operation>" : op.id(), Category.VALIDATION_FAILED)
@@ -801,6 +863,7 @@ public final class ClientCore {
                     .remedy("The operation descriptor is invalid: " + problem + ". Regenerate the SDK or fix the descriptor; nothing was sent.")
                     .fail();
         }
+        checkImportScope(op, urlOverride != null ? urlOverride : baseUrl);
         register(op);
         JsonObject supplied = normalizeArgs(rawArgs);
         if (supplied == null) {
@@ -832,7 +895,14 @@ public final class ClientCore {
             confirmed(new ConfirmTarget(op.id(), op.id(), "preview(...)"), op.agent().safety(), args, opts);
         }
         String method = op.method();
-        Auth.Resolved auth = authResolver.resolve(op, method);
+        String credentialError = Auth.insecureHttp(urlOverride != null ? urlOverride : baseUrl, options.allowInsecureHttp) ? Auth.INSECURE_HTTP_AUTH : null;
+        if (Deadline.expired()) {
+            throw Deadline.failure(this, op.id(), "before the request could be sent");
+        }
+        Auth.Resolved auth = authResolver.resolve(op, method, credentialError);
+        if (Deadline.expired()) {
+            throw Deadline.failure(this, op.id(), "while authenticating");
+        }
         if (auth.failed != null) {
             throw diag(op.id(), Category.AUTH_FAILED).remedy(auth.failed).fail();
         }
@@ -861,13 +931,17 @@ public final class ClientCore {
         String[] urls = buildUrl(op, args, auth.plan, urlOverride);
         Serialize.Headers hs = new Serialize.Headers();
         buildHeaders(op, args, opts, auth.plan, hs);
+        if (Auth.insecureHttp(urls[0], options.allowInsecureHttp) && (!auth.plan.headers.isEmpty() || !auth.plan.cookies.isEmpty() || !auth.plan.query.isEmpty()
+                || hs.entries.stream().anyMatch(h -> h.secret() || Auth.credentialHeader(api, h.name(), false)))) {
+            throw diag(op.id(), Category.AUTH_FAILED).remedy(Auth.INSECURE_HTTP_AUTH).fail();
+        }
         Set<String> paramNames = new HashSet<>();
         for (OperationDescriptor.Param prm : op.argumentParams()) {
             paramNames.add(prm.name());
         }
         List<String> bodyPaths = Args.sensitiveBodyPaths(op);
         Object value = Json.ABSENT;
-        if (!Auth.isSafeMethod(method) || method.equals("OPTIONS")) {
+        if (!Auth.isSafeMethod(method) || method.equals("OPTIONS") || method.equals("QUERY")) {
             value = Serialize.bodyValue(op, args, paramNames);
         }
         Serialize.Encoded encoded;
@@ -903,6 +977,12 @@ public final class ClientCore {
         }
         if (p == Purpose.SERVER_PREVIEW && op.agent().preview().mode().equals("header")) {
             hs.set(op.agent().preview().header(), op.agent().preview().value(), false);
+        }
+        if (Auth.insecureHttp(urls[0], options.allowInsecureHttp) && hs.entries.stream().anyMatch(h -> {
+            boolean preserved = key != null && h.name().equalsIgnoreCase(header) && h.value().equals(key);
+            return (h.secret() && !preserved) || Auth.credentialHeader(api, h.name(), preserved);
+        })) {
+            throw diag(op.id(), Category.AUTH_FAILED).remedy(Auth.INSECURE_HTTP_AUTH).fail();
         }
         for (Serialize.Header e : hs.entries) {
             if (Text.validHeaderName(e.name()) && Text.validHeaderValue(e.value())) {
@@ -1136,6 +1216,7 @@ public final class ClientCore {
         if (!validUrl(full)) {
             throw badBase(op);
         }
+        checkImportScope(op, full);
         return new String[] {full, display};
     }
 
@@ -1284,20 +1365,25 @@ public final class ClientCore {
     /** Sends with retries. With stream, a 2xx text/event-stream answer is returned unread. */
     Sent sendWith(Prepared p, CallOptions opts, boolean stream) {
         OperationDescriptor op = p.op;
-        Long cap = opts.maxResponseBytes() != null ? opts.maxResponseBytes() : options.maxResponseBytes;
-        if (cap != null && (cap < 1 || cap > 9_007_199_254_740_991L)) {
-            throw diag(op.id(), Category.VALIDATION_FAILED).param("maxResponseBytes")
-                    .remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").fail();
-        }
+        long cap = responseLimit(op, opts);
         RetryPolicy policy = retryPolicy(op);
         boolean mutation = op.isMutation();
         boolean protectedCall = Classify.hasReplayProtection(op, p.hasKey);
         Classify.OutcomeCheck check = mutation && !protectedCall ? outcomeCheck(op, p.args) : null;
         Duration attemptTimeout = attemptTimeout(opts);
         Duration idle = stream ? idleTimeout : null;
+        Long deadline = Deadline.current();
         int attempts = 0;
+        TungstenException previousMutation = null;
         while (true) {
             attempts++;
+            // No attempt starts once the deadline has passed; a mutation already sent keeps its outcome.
+            if (Deadline.expired()) {
+                if (previousMutation != null) {
+                    throw previousMutation;
+                }
+                throw Deadline.failure(this, op.id(), "before the request could be sent");
+            }
             Middleware.RequestContext rctx = context(p, attempts, p.method, p.displayUrl);
             onRequest(rctx);
             // Redirects are never followed by the HTTP client: it would forward credential headers
@@ -1307,7 +1393,7 @@ public final class ClientCore {
             Serialize.Payload body = p.payload;
             List<Serialize.Header> hs = new ArrayList<>(p.headers.entries);
             Transport.Outcome outcome = Transport.attempt(http,
-                    new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle, cap));
+                    new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle, cap, deadline));
             for (int hops = 0; !redirectsDisabled && !mutation && hops < MAX_REDIRECTS; hops++) {
                 if (outcome.kind != Transport.Kind.RESPONSE || "oversized".equals(outcome.bodyFailure) || !isRedirect(outcome.status)) {
                     break;
@@ -1325,7 +1411,7 @@ public final class ClientCore {
                 }
                 rctx = new Middleware.RequestContext(rctx.operation(), rctx.attempt(), method, next[1], rctx.headers(),
                         rctx.body(), rctx.hasBody());
-                outcome = Transport.attempt(http, new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle, cap));
+                outcome = Transport.attempt(http, new Transport.Request(target, method, hs, body, attemptTimeout, stream, idle, cap, deadline));
             }
             p.finalUrl = target;
             Classify.Context cctx = new Classify.Context(identity, api, op, p.key, p.hasKey, p.keyHeader, attempts, check);
@@ -1337,6 +1423,10 @@ public final class ClientCore {
             }
             Diagnostic d = failure.diagnostic().scrubbed(p.secrets);
             TungstenException done = new TungstenException(d, failure.partial(), failure.hasPartial());
+            if (mutation && (previousMutation == null || previousMutation.diagnostic().category() != Category.OUTCOME_UNKNOWN
+                    || d.category() == Category.OUTCOME_UNKNOWN)) {
+                previousMutation = done;
+            }
             if (attempts > policy.max() || !retryableCategory(d.category())) {
                 throw done;
             }
@@ -1364,6 +1454,10 @@ public final class ClientCore {
                 }
             }
             onRetry(rctx, d);
+            // A retry that could not start before the deadline is not waited for.
+            if (deadline != null && Deadline.remainingNanos() <= delayMs * 1e6) {
+                throw done;
+            }
             if (!sleep(delayMs)) {
                 throw done;
             }
@@ -1415,6 +1509,20 @@ public final class ClientCore {
         OperationDescriptor op = p.op;
         boolean mutation = op.isMutation();
         int attempts = cctx.attempts();
+        if (outcome.deadline) {
+            if (outcome.kind == Transport.Kind.NOT_SENT) {
+                throw Deadline.failure(this, op.id(), "before the request could be sent");
+            }
+            if (outcome.kind == Transport.Kind.TIMEOUT) {
+                String cause = "The operation deadline expired before a response arrived.";
+                if (mutation) {
+                    throw new TungstenException(Classify.outcomeUnknown(cctx, cause, null, null, null, null, null));
+                }
+                throw diag(op.id(), Category.UPSTREAM_UNAVAILABLE).code("DEADLINE_EXCEEDED").retry(Retryable.NEVER)
+                        .remedy(cause + " This read has no side effects; call again with a larger " + identity.deadline() + ".")
+                        .attempts(attempts).fail();
+            }
+        }
         switch (outcome.kind) {
             case NOT_SENT:
                 throw diag(op.id(), Category.TRANSPORT_FAILED)
@@ -1474,7 +1582,14 @@ public final class ClientCore {
                     .fail();
         }
         if (success && !outcome.bodyOk) {
-            String failure = "timeout".equals(outcome.bodyFailure) ? "timeout" : "broken";
+            String failure = "timeout".equals(outcome.bodyFailure) || "deadline".equals(outcome.bodyFailure) ? outcome.bodyFailure : "broken";
+            if (!mutation && failure.equals("deadline")) {
+                throw diag(op.id(), Category.UPSTREAM_UNAVAILABLE).code("DEADLINE_EXCEEDED").status(status).requestId(requestId)
+                        .retry(Retryable.NEVER)
+                        .remedy("The operation deadline expired while the response body was read. This read has no side effects; call again with a larger "
+                                + identity.deadline() + ".")
+                        .attempts(attempts).fail();
+            }
             if (!mutation) {
                 throw diag(op.id(), Category.UPSTREAM_UNAVAILABLE).status(status).requestId(requestId).retry(Retryable.AFTER_DELAY)
                         .remedy("The response body was cut off (" + failure + "). This read has no side effects; call again.")
@@ -1523,7 +1638,7 @@ public final class ClientCore {
             problem = diag(op.id(), Category.UNEXPECTED_RESPONSE).status(status).requestId(requestId).param("response")
                     .expected(expected).remedy(remediation).attempts(attempts).build();
         } else if (validateResponses != ClientOptions.ValidateResponses.OFF && op.response() != null && decoded.has) {
-            List<Schema.Issue> issues = judge(op.response(), decoded.value);
+            List<Schema.Issue> issues = judge(op.id(), "response", op.response(), decoded.value, null);
             if (!issues.isEmpty()) {
                 Schema.Issue issue = issues.get(0);
                 List<String> path = Schema.segments(issue.path());
@@ -1562,12 +1677,43 @@ public final class ClientCore {
         return new Sent(new Result.Ok<>(decoded.value, decoded.has, decoded.value, meta, null), null, null);
     }
 
-    /** Runs a validator that only judges: a failure is an issue at the root. */
-    static List<Schema.Issue> judge(Schema s, Object value) {
+    /**
+     * Runs a validator that only judges: a failure is an issue at the root. The patterns it could
+     * not check are reported once through the observer under {@code root} (for example
+     * "response"); {@code seen}, when not null, deduplicates across several calls.
+     */
+    List<Schema.Issue> judge(String operation, String root, Schema s, Object value, Set<String> seen) {
+        List<Schema.PatternNote> notes = new ArrayList<>();
+        List<Schema.Issue> issues;
         try {
-            return s.validate(value);
+            issues = s.validate(value, notes);
         } catch (RuntimeException e) {
             return List.of(new Schema.Issue(List.of(), "the response schema failed (the validator threw)"));
+        }
+        reportUnchecked(operation, Category.UNEXPECTED_RESPONSE, notes, p -> root + Schema.formatPath(p), seen);
+        return issues;
+    }
+
+    /**
+     * Emits PATTERN_UNCHECKED for each schema pattern the runtime could not check: the value was
+     * accepted without it. Names the path, the pattern and the reason, never the value.
+     */
+    void reportUnchecked(String operation, Category category, List<Schema.PatternNote> notes,
+            java.util.function.Function<List<Object>, String> show, Set<String> seen) {
+        if (notes.isEmpty() || onDiagnostic == null) {
+            return;
+        }
+        Set<String> done = seen == null ? new HashSet<>() : seen;
+        for (Schema.PatternNote n : notes) {
+            String param = show.apply(n.path());
+            if (done.size() >= 16 || !done.add(param + "\n" + n.pattern())) {
+                continue;
+            }
+            emit(diag(operation, category).code("PATTERN_UNCHECKED").retry(Retryable.NEVER).param(param)
+                    .expected("a value matching the pattern /" + n.pattern() + "/")
+                    .remedy("The pattern /" + n.pattern() + "/ at " + param + " was not checked because " + n.reason()
+                            + "; the value was accepted without it. The server still validates it.")
+                    .build());
         }
     }
 

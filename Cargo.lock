@@ -135,6 +135,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "block2"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdeb9d870516001442e364c5220d3574d2da8dc765554b4a617230d33fa58ef5"
+dependencies = [
+ "objc2",
+]
+
+[[package]]
 name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -193,7 +202,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -258,6 +267,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctrlc"
+version = "3.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0b1fab2ae45819af2d0731d60f2afe17227ebb1a1538a236da84c93e9a60162"
+dependencies = [
+ "dispatch2",
+ "nix",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -268,6 +288,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dispatch2"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
+dependencies = [
+ "bitflags 2.13.2",
+ "block2",
+ "libc",
+ "objc2",
+]
+
+[[package]]
 name = "displaydoc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -275,7 +307,7 @@ checksum = "c6232dd377dcc64799954cbd3a9bb882e9cdc1308ccd87b1c098f1fb2eaf82a8"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -298,6 +330,16 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
+name = "errno"
+version = "0.3.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "fancy-regex"
@@ -625,6 +667,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
 
 [[package]]
+name = "linux-raw-sys"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b83b49c75b50cb715b09d337b045481493a8ada2bb3e872f2bae71db45b27696"
+
+[[package]]
 name = "litemap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -690,6 +738,21 @@ dependencies = [
  "cfg_aliases",
  "libc",
 ]
+
+[[package]]
+name = "objc2"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08849bbd4767dfae9457696856ae1c84fe4e0281bbe4a7abff2d0e06fb7981f8"
+dependencies = [
+ "objc2-encode",
+]
+
+[[package]]
+name = "objc2-encode"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef25abbcd74fb2609453eb695bd2f860d389e457f67dc17cafc8b8cbc89d0c33"
 
 [[package]]
 name = "once_cell"
@@ -782,7 +845,7 @@ checksum = "92ecd8964f8453721699a1ed72037b0db49ce2f5a5138486ee89bed6f67cdf3a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -814,6 +877,19 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rustix"
+version = "1.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+dependencies = [
+ "bitflags 2.13.2",
+ "errno",
+ "libc",
+ "linux-raw-sys",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -853,9 +929,9 @@ dependencies = [
 
 [[package]]
 name = "schemars"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "687274d293b6cdc6e73e0fee520bf2049650090d7164f87672d212a3c530cf4a"
+checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
 dependencies = [
  "dyn-clone",
  "indexmap",
@@ -867,14 +943,14 @@ dependencies = [
 
 [[package]]
 name = "schemars_derive"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d98c67716b46af2f0b8cf752abc930f6f9aecfbf671ecfb531db8a31dbe4e2ba"
+checksum = "e1c3a92094fa7d61aa124645844facb6b554dfc797136d0f5fd1f890e2bffc69"
 dependencies = [
  "proc-macro2",
  "quote",
  "serde_derive_internals",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -914,7 +990,7 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -925,15 +1001,16 @@ checksum = "f852137cce035d6a4df67ccce505ff6b3e9fd3a10e3e52b24dc71e650bb1a9bd"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
 name = "serde_json"
-version = "1.0.151"
+version = "1.0.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+checksum = "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6"
 dependencies = [
+ "foldhash 0.2.0",
  "indexmap",
  "itoa",
  "memchr",
@@ -961,7 +1038,7 @@ checksum = "8d3b1629de253c70a0508c3899572da79ca359fdab27c7920ff00406df418906"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -1037,9 +1114,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.6"
+version = "3.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee"
+checksum = "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1054,7 +1131,7 @@ checksum = "901704edd0dfe137f1987838ee4f259e4e063c31371bdb423f7ae38ec6f77f02"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -1089,7 +1166,7 @@ checksum = "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -1165,6 +1242,8 @@ name = "tungsten-cli"
 version = "0.1.5"
 dependencies = [
  "clap",
+ "ctrlc",
+ "nix",
  "schemars",
  "serde",
  "serde_json",
@@ -1191,6 +1270,7 @@ dependencies = [
  "tungsten-mock",
  "tungsten-openapi",
  "tungsten-tokens",
+ "ureq",
  "url",
 ]
 
@@ -1215,7 +1295,7 @@ dependencies = [
  "proc-macro2",
  "serde",
  "serde_json",
- "syn 3.0.6",
+ "syn 3.0.9",
  "url",
 ]
 
@@ -1233,6 +1313,9 @@ dependencies = [
 name = "tungsten-emit"
 version = "0.1.5"
 dependencies = [
+ "nix",
+ "process-wrap",
+ "rustix",
  "schemars",
  "serde",
  "serde_json",
@@ -1240,6 +1323,7 @@ dependencies = [
  "tungsten-core",
  "tungsten-ir",
  "tungsten-tokens",
+ "windows",
 ]
 
 [[package]]
@@ -1247,6 +1331,7 @@ name = "tungsten-emit-csharp"
 version = "0.1.5"
 dependencies = [
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-ir",
@@ -1257,6 +1342,7 @@ name = "tungsten-emit-dart"
 version = "0.1.5"
 dependencies = [
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-ir",
@@ -1278,6 +1364,7 @@ name = "tungsten-emit-fsharp"
 version = "0.1.5"
 dependencies = [
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-ir",
@@ -1288,6 +1375,7 @@ name = "tungsten-emit-java"
 version = "0.1.5"
 dependencies = [
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-ir",
@@ -1298,6 +1386,7 @@ name = "tungsten-emit-kotlin"
 version = "0.1.5"
 dependencies = [
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-ir",
@@ -1309,8 +1398,10 @@ version = "0.1.5"
 dependencies = [
  "serde",
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
+ "tungsten-emit-py",
  "tungsten-emit-ts",
  "tungsten-ir",
  "tungsten-tokens",
@@ -1321,6 +1412,7 @@ name = "tungsten-emit-py"
 version = "0.1.5"
 dependencies = [
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-ir",
@@ -1331,6 +1423,7 @@ name = "tungsten-emit-rs"
 version = "0.1.5"
 dependencies = [
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-ir",
@@ -1341,6 +1434,7 @@ name = "tungsten-emit-ruby"
 version = "0.1.5"
 dependencies = [
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-ir",
@@ -1352,6 +1446,7 @@ version = "0.1.5"
 dependencies = [
  "petgraph",
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-ir",
@@ -1362,6 +1457,7 @@ name = "tungsten-emit-webmcp"
 version = "0.1.5"
 dependencies = [
  "serde_json",
+ "tungsten-config",
  "tungsten-core",
  "tungsten-emit",
  "tungsten-emit-ts",
@@ -1406,10 +1502,15 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "nix",
+ "process-wrap",
+ "rustix",
+ "schemars",
  "serde",
  "serde_json",
  "tokio",
  "tungsten-ir",
+ "windows",
 ]
 
 [[package]]
@@ -1765,7 +1866,7 @@ checksum = "ec8ebde2db3681e8c9980cc27822030e68752690ddfa9473e739aeb4dbde6d71"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
  "synstructure",
 ]
 
@@ -1786,7 +1887,7 @@ checksum = "f75b4683f6c7f45248d4d64056a24298c6281e0993356d7d1b4a1a962ef10d4a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
  "synstructure",
 ]
 
@@ -1826,7 +1927,7 @@ checksum = "34df6fc39dbd26ddc9c10e6a2984476e13acce22e64e4487636ef494369225da"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.6",
+ "syn 3.0.9",
 ]
 
 [[package]]

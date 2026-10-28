@@ -28,6 +28,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Generic, Literal, Protocol, TypedDict, TypeVar
 
+from ._upload import UploadSource
+from .scheduler import RequestScheduler, SchedulerOptions
+from .telemetry import TelemetryObserver
+
 if sys.version_info >= (3, 11):
     from typing import NotRequired
 else:
@@ -177,9 +181,13 @@ ergonomics. Branch with ``isinstance(result, Ok)`` or ``result.ok is True``
 
 # ------------------------------------------------------------- descriptors
 
-HttpMethod = Literal["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE"]
+# A standard method, or an OpenAPI 3.2 ``additionalOperations`` method token
+# sent as written (unsafe, not idempotent).
+HttpMethod = Literal["GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE", "QUERY"] | str
 ParamLocation = Literal["path", "query", "header", "cookie"]
-ParamStyle = Literal["simple", "form", "label", "matrix", "space_delimited", "pipe_delimited", "deep_object"]
+ParamStyle = Literal[
+    "simple", "form", "label", "matrix", "space_delimited", "pipe_delimited", "deep_object", "cookie"
+]
 ParamRole = Literal["plain", "idempotency_key", "dry_run", "origin", "auth", "constant"]
 
 
@@ -219,11 +227,29 @@ class ArgBodyShape(TypedDict):
     arg: str
 
 
+class PartHeader(TypedDict):
+    """A header with a fixed value on a multipart part."""
+
+    name: str
+    value: str
+
+
+class PartDescriptor(TypedDict):
+    """The declared encoding of one multipart field. ``content_type`` is the
+    media type each part of the field is sent with, unless a file part
+    carries its own."""
+
+    name: str
+    content_type: NotRequired[str]
+    headers: NotRequired[list[PartHeader]]
+
+
 class BodyDescriptor(TypedDict):
     media_type: str
     encoding: BodyEncoding
     required: bool
     shape: MergedBodyShape | ArgBodyShape
+    parts: NotRequired[list[PartDescriptor]]
 
 
 StatusMatch = int | Literal["1XX", "2XX", "3XX", "4XX", "5XX", "default"]
@@ -383,10 +409,16 @@ BinaryContent = bytes | bytearray | memoryview | SupportsRead
 """The content of a binary request value: bytes, or a binary file object the
 runtime reads."""
 
-BinaryInput = BinaryContent | tuple[str | None, BinaryContent] | tuple[str | None, BinaryContent, str | None]
+BinaryInput = (
+    BinaryContent
+    | tuple[str | None, BinaryContent]
+    | tuple[str | None, BinaryContent, str | None]
+    | UploadSource
+)
 """A binary request value (a whole binary body, or a file of a multipart
 body): bytes, a binary file object, or a ``(filename, content[,
-content_type])`` tuple. The runtime reads files into memory before sending."""
+content_type])`` tuple. The runtime reads files into memory before sending.
+A whole binary body also takes an ``UploadSource``, streamed instead."""
 
 
 class RpcBinding(TypedDict):
@@ -418,6 +450,8 @@ class StreamDescriptor(TypedDict):
     #: Wire name of the boolean request body field that selects the stream;
     #: ``ClientCore.stream`` sets it to ``True``.
     flag: NotRequired[str]
+    #: Every event's ``data`` is text delivered as written, not JSON.
+    text: NotRequired[bool]
 
 
 class OperationDescriptor(TypedDict):
@@ -649,6 +683,10 @@ class ClientOptions:
     #: retain capacity until completion and late results are rejected, without a
     #: hard settlement guarantee. OS resolver cancellation is platform-dependent.
     timeout_ms: int = 30_000
+    #: Total deadline of one logical call in milliseconds (see
+    #: ``CallOptions.deadline_ms``). None: no total deadline, only ``timeout_ms``
+    #: per attempt.
+    deadline_ms: int | None = None
     #: Overrides the API's per-tier retry defaults (``ApiDescriptor.retries``)
     #: for every tier: a ``RetryPolicy`` mapping field by field, a
     #: ``RetryOptions`` instance as a whole.
@@ -658,6 +696,8 @@ class ClientOptions:
     validate_responses: Literal["off", "warn", "strict"] = "warn"
     on_diagnostic: Callable[[Diagnostic], None] | None = None
     headers: Mapping[str, str] = field(default_factory=dict[str, str])
+    #: At least 32 cryptographically random bytes, copied at construction.
+    #: Shorter keys raise ValueError. None generates a random per-client key.
     confirmation_key: bytes | None = None
     operations: Sequence[OperationDescriptor] = ()
     macros: Sequence[MacroDescriptor] = ()
@@ -667,6 +707,21 @@ class ClientOptions:
     now: Callable[[], float] | None = None
     #: Random number in [0, 1) for retry jitter.
     random: Callable[[], float] | None = None
+    #: Bounds the requests this client has in flight and waiting, and shares
+    #: rate-limit pauses between them. ``SchedulerOptions`` makes a scheduler
+    #: of this client alone; pass one ``RequestScheduler`` to several clients
+    #: that share a quota. None (default): every call is sent at once.
+    scheduler: RequestScheduler | SchedulerOptions | None = None
+    #: The tenant or principal this client calls for. Clients sharing a
+    #: scheduler keep separate capacity, queues and pauses per tenant.
+    tenant: str | None = None
+    #: Receives local telemetry events for ``call()``: the operation, each
+    #: attempt, and the authentication, scheduler queue and retry backoff
+    #: phases. A callable or an object with ``on_event``. Off by default;
+    #: nothing is ever sent anywhere by the runtime. Events hold only bounded
+    #: values (no URLs, headers, bodies, credentials or error text); see
+    #: ``tungsten_runtime.telemetry.TelemetryEvent``.
+    telemetry: TelemetryObserver | None = None
     #: Largest server-sent event ``stream()`` accepts, in UTF-8 bytes (the
     #: field lines of one event plus the line being read). A larger one ends
     #: the stream with an ``UNEXPECTED_RESPONSE`` failure. Default 1 MiB.
@@ -691,8 +746,15 @@ class ClientOptions:
     #: May tighten the API default; an API configured with none cannot be relaxed.
     redirects: RedirectPolicy | None = None
 
-    #: Optional ordinary-response byte cap (positive safe integer). Unset: unbounded.
+    #: Ordinary-response byte cap (positive safe integer). None inherits the 4 MiB default.
     max_response_bytes: int | None = None
+
+    #: Separate code/refresh token response cap; positive safe integer, default 64 KiB.
+    max_oauth_token_response_bytes: int = 65_536
+
+    #: Explicitly allows credentials over non-loopback HTTP, including OAuth.
+    #: Default False: use HTTPS. localhost, 127/8 and ::1 work without opt-in.
+    allow_insecure_http: bool = False
 
 
 class CallOptions(TypedDict, total=False):
@@ -703,9 +765,34 @@ class CallOptions(TypedDict, total=False):
     confirm: str | Literal[True]
     allow_confirm_true: bool
     timeout_ms: int
-    max_response_bytes: int
+    #: Total deadline in milliseconds for this call, overriding the client
+    #: default; 0 or omitted means none. Measured on a monotonic clock from the
+    #: call, it bounds authentication, idempotency-key reservation, every
+    #: attempt (each one's ``timeout_ms`` is cut to the time left), retry waits,
+    #: response bodies and verification; for ``pages``, ``poll`` and
+    #: ``run_macro`` the whole traversal, poll or macro. No attempt starts after
+    #: it expires (``code`` ``DEADLINE_EXCEEDED``). For ``stream()`` it bounds
+    #: connecting and each reconnect, not an open stream (see
+    #: ``idle_timeout_ms``). A mutation already sent reports ``OUTCOME_UNKNOWN``,
+    #: never a blind replay. Token refreshes, stores and hooks are not
+    #: cancelled, only no longer waited for.
+    deadline_ms: int
+    max_response_bytes: int | None
     verify: bool
     headers: Mapping[str, str]
+
+
+class DownloadOptions(CallOptions, total=False):
+    """Options of ``download``: those of a call, plus the transfer's own."""
+
+    #: Most body bytes the download may deliver. A larger declared
+    #: ``Content-Length`` fails before any byte is read; a body that grows past
+    #: it ends the download (``UNEXPECTED_RESPONSE``, ``code``
+    #: ``RESPONSE_TOO_LARGE``). ``max_response_bytes`` does not apply to a
+    #: streamed body, only to an error body. Default: no limit.
+    max_bytes: int | None
+    #: Called after every chunk with a ``TransferProgress``. What it raises is ignored.
+    on_progress: Callable[[Any], object]
 
 
 # ---------------------------------------------------------------- results
@@ -753,6 +840,55 @@ class Page(Generic[_T]):
 
 
 @dataclass(frozen=True, slots=True)
+class CheckpointPage(Page[_T]):
+    """A page of a checkpointed export (``ClientCore.export_pages``). Persist
+    ``checkpoint`` only after the page's items are committed to the sink: a
+    crash before persisting replays this page on resume, so the sink must
+    deduplicate."""
+
+    #: Sensitive token (it holds the provider's next-page cursor or URL)
+    #: recording progress through this page.
+    checkpoint: str
+    #: The token records a finished traversal; resuming it reads nothing.
+    complete: bool
+
+
+class CheckpointOptions(TypedDict, total=False):
+    """A durable, resumable read-only export (``ClientCore.export_pages``).
+    The checkpoint token is bound to the API, operation, pagination contract,
+    base URL, ``ClientOptions.tenant``, ``scope`` and every argument except the
+    page position; a token from another traversal, key or runtime contract is
+    refused before any request."""
+
+    #: HMAC-SHA-256 key of at least 32 bytes that seals and verifies tokens.
+    #: Keep it as a secret, stable across restarts. Required.
+    key: bytes
+    #: The account or principal the export reads for, when
+    #: ``ClientOptions.tenant`` does not already say. Never a credential.
+    scope: str
+    #: A token from an acknowledged page to resume after; omitted starts from
+    #: the first page. Restarting is the caller's explicit choice.
+    resume: str
+    #: Refuse a token issued more than this many milliseconds ago.
+    max_age_ms: float
+
+
+class CheckpointStatus(TypedDict):
+    """The secret-free part of a checkpoint (``describe_checkpoint``)."""
+
+    version: Literal[1]
+    operation: str
+    style: str
+    #: ``partial`` (more pages), ``complete``, or ``stopped`` by a server fault
+    #: (a repeated cursor or a cross-origin Link) that resuming would repeat.
+    state: Literal["partial", "complete", "stopped"]
+    #: Pages acknowledged across every run of this export.
+    pages: int
+    #: Epoch milliseconds the token was issued.
+    issued_at: int
+
+
+@dataclass(frozen=True, slots=True)
 class StreamEvent(Generic[_T_co]):
     """One event of a stream."""
 
@@ -794,12 +930,16 @@ __all__ = [
     "BodyEncoding",
     "CallOptions",
     "Category",
+    "CheckpointOptions",
+    "CheckpointPage",
+    "CheckpointStatus",
     "ClientOptions",
     "CompositeScheme",
     "ConfirmationMeta",
     "CookiePart",
     "CursorPagination",
     "Diagnostic",
+    "DownloadOptions",
     "Err",
     "GatedStatus",
     "HeaderPart",
@@ -831,6 +971,8 @@ __all__ = [
     "ParamLocation",
     "ParamRole",
     "ParamStyle",
+    "PartDescriptor",
+    "PartHeader",
     "Predicate",
     "PreviewEndpoint",
     "PreviewHeader",

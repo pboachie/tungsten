@@ -31,7 +31,8 @@ pub struct CliOutput {
     pub ok: bool,
     /// The process exit code: 0 ok, 1 input errors, stale output or item
     /// not found, 2 usage, 3 I/O or internal failure, 4 refused without
-    /// confirmation.
+    /// confirmation, 5 `update check` found a newer release, 6 `update check`
+    /// could not confirm a usable release.
     pub exit_code: i32,
     /// Diagnostics about the input, in deterministic order.
     pub diagnostics: Vec<JsonDiagnostic>,
@@ -82,18 +83,46 @@ pub enum CommandName {
     Init,
     #[serde(rename = "doctor")]
     Doctor,
+    #[serde(rename = "capabilities")]
+    Capabilities,
+    #[serde(rename = "config")]
+    Config,
+    #[serde(rename = "workspace")]
+    Workspace,
+    #[serde(rename = "lock")]
+    Lock,
+    #[serde(rename = "refresh-import")]
+    RefreshImport,
+    #[serde(rename = "bundle export")]
+    BundleExport,
+    #[serde(rename = "bundle import")]
+    BundleImport,
+    #[serde(rename = "policy digest")]
+    PolicyDigest,
     #[serde(rename = "emitters")]
     Emitters,
     #[serde(rename = "generate")]
     Generate,
     #[serde(rename = "mock")]
     Mock,
+    #[serde(rename = "scenario")]
+    Scenario,
     #[serde(rename = "report")]
     Report,
     #[serde(rename = "diff")]
     Diff,
     #[serde(rename = "overlay suggest")]
     OverlaySuggest,
+    #[serde(rename = "support-bundle")]
+    SupportBundle,
+    #[serde(rename = "update check")]
+    UpdateCheck,
+    #[serde(rename = "update notice")]
+    UpdateNotice,
+    #[serde(rename = "upgrade rehearse")]
+    UpgradeRehearse,
+    #[serde(rename = "upgrade apply")]
+    UpgradeApply,
 }
 
 /// A diagnostic flattened to its first label.
@@ -182,12 +211,28 @@ pub enum CommandResult {
     Schema(SchemaResult),
     Init(InitResult),
     Doctor(DoctorResult),
+    Capabilities(tungsten_config::capabilities::CapabilityCatalog),
+    Config(tungsten_config::inspection::ConfigurationInspection),
+    Workspace(crate::commands::workspace::WorkspaceResult),
+    Lock(Box<crate::commands::lock::LockResult>),
+    RefreshImport(Box<crate::commands::refresh_import::RefreshImportResult>),
+    BundleExport(Box<crate::commands::bundle::BundleExportResult>),
+    BundleImport(Box<crate::commands::bundle::BundleImportResult>),
+    PolicyDigest(tungsten_core::policy::PolicyDigestResult),
     Emitters(EmittersResult),
     Generate(GenerateResult),
     Mock(MockResult),
+    Scenario(ScenarioResult),
     Report(Box<ReportResult>),
     Diff(DiffResult),
     OverlaySuggest(OverlaySuggestResult),
+    SupportBundle(Box<crate::commands::support_bundle::SupportBundlePreview>),
+    SupportBundleExport(Box<crate::commands::support_bundle::SupportBundleExportReceipt>),
+    SupportBundleInspection(Box<crate::commands::support_bundle_inspect::SupportBundleInspection>),
+    UpdateCheck(crate::commands::update::UpdateCheckResult),
+    UpdateNotice(crate::commands::update_notice::UpdateNoticeResult),
+    UpgradeRehearse(Box<crate::commands::upgrade::RehearsalResult>),
+    UpgradeApply(Box<crate::commands::upgrade_apply::UpgradeApplyResult>),
     Help(HelpResult),
 }
 
@@ -233,6 +278,9 @@ pub struct CheckResult {
     /// With `--ci`: every configured target, its generated output compared
     /// with what the emitters produce now. Empty without `--ci`.
     pub outputs: Vec<TargetReport>,
+    /// Locked run (`--locked` or `locked: true`): inputs were read offline
+    /// and the project was verified against tungsten.lock.json (TG0128).
+    pub locked: bool,
 }
 
 /// `tungsten generate`.
@@ -250,6 +298,9 @@ pub struct GenerateResult {
     pub strict: bool,
     /// Warnings promoted to errors by `--strict`.
     pub promoted: usize,
+    /// Locked run (`--locked` or `locked: true`): inputs were read offline
+    /// and the project matched tungsten.lock.json before any emitter ran.
+    pub locked: bool,
 }
 
 /// One target of `generate`, or of `check --ci`.
@@ -313,6 +364,21 @@ pub struct MockResult {
     pub max_recorded_calls: usize,
     /// Cap on stored idempotent responses (`--max-idempotent-responses`).
     pub max_idempotent_responses: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScenarioAction {
+    Validate,
+    Run,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScenarioResult {
+    pub action: ScenarioAction,
+    pub validated: bool,
+    pub run: Option<tungsten_mock::RunReport>,
 }
 
 /// The `$ref` graph: schema nodes (every `$ref` target and every component
@@ -505,6 +571,9 @@ pub enum InitAction {
 #[schemars(deny_unknown_fields)]
 pub struct DoctorResult {
     pub tools: Vec<ToolReport>,
+    /// OpenAPI input versions the frontend reads, with the 3.2 constructs it
+    /// diagnoses.
+    pub openapi_inputs: Vec<tungsten_config::capabilities::OpenApiVersionCapability>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -985,19 +1054,33 @@ pub struct DiagnosticGroup {
 }
 
 /// Which `$defs` entry describes `result` for each command.
-const RESULT_DEFS: [(CommandName, &str); 12] = [
+const RESULT_DEFS: &[(CommandName, &str)] = &[
     (CommandName::Check, "CheckResult"),
     (CommandName::IrDump, "IrDumpResult"),
     (CommandName::Explain, "ExplainResult"),
     (CommandName::Schema, "SchemaResult"),
     (CommandName::Init, "InitResult"),
     (CommandName::Doctor, "DoctorResult"),
+    (CommandName::Capabilities, "CapabilityCatalog"),
+    (CommandName::Config, "ConfigurationInspection"),
+    (CommandName::Workspace, "WorkspaceResult"),
+    (CommandName::Lock, "LockResult"),
+    (CommandName::RefreshImport, "RefreshImportResult"),
+    (CommandName::BundleExport, "BundleExportResult"),
+    (CommandName::BundleImport, "BundleImportResult"),
+    (CommandName::PolicyDigest, "PolicyDigestResult"),
     (CommandName::Emitters, "EmittersResult"),
     (CommandName::Generate, "GenerateResult"),
     (CommandName::Mock, "MockResult"),
+    (CommandName::Scenario, "ScenarioResult"),
     (CommandName::Report, "ReportResult"),
     (CommandName::Diff, "DiffResult"),
     (CommandName::OverlaySuggest, "OverlaySuggestResult"),
+    (CommandName::SupportBundle, "SupportBundlePreview"),
+    (CommandName::UpdateCheck, "UpdateCheckResult"),
+    (CommandName::UpdateNotice, "UpdateNoticeResult"),
+    (CommandName::UpgradeRehearse, "RehearsalResult"),
+    (CommandName::UpgradeApply, "UpgradeApplyResult"),
 ];
 
 /// The JSON Schema (draft 2020-12) of [`CliOutput`]. Beyond the generated
@@ -1023,10 +1106,15 @@ pub fn cli_output_schema() -> Value {
     let rules: Vec<Value> = RESULT_DEFS
         .iter()
         .map(|(command, def)| {
+            let mut results = vec![json!({ "$ref": format!("#/$defs/{def}") }), json!({ "type": "null" })];
+            if *command == CommandName::SupportBundle {
+                results.push(json!({ "$ref": "#/$defs/SupportBundleExportReceipt" }));
+                results.push(json!({ "$ref": "#/$defs/SupportBundleInspection" }));
+            }
             json!({
                 "if": { "properties": { "command": { "const": command } }, "required": ["command"] },
                 "then": { "properties": { "result": {
-                    "anyOf": [{ "$ref": format!("#/$defs/{def}") }, { "type": "null" }]
+                    "anyOf": results
                 } } }
             })
         })

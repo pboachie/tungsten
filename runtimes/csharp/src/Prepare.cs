@@ -505,7 +505,9 @@ public sealed partial class ClientCore
             IReadOnlyList<Issue> issues;
             try
             {
-                issues = request.Validate(args);
+                var notes = new List<PatternNote>();
+                issues = request.Validate(args, notes);
+                ReportUncheckedPatterns(op.Id, "args", notes, Category.ValidationFailed);
             }
             catch (Exception e) when (e is not Failure)
             {
@@ -705,12 +707,14 @@ public sealed partial class ClientCore
                 .Expected("a valid operation descriptor")
                 .Remedy("The operation descriptor is invalid: the descriptor is missing. Regenerate the SDK or fix the descriptor; nothing was sent.").Fail();
         }
+        ResponseLimit(op, opts);
         if (DescriptorProblem(op) is string problem)
         {
             throw new Diag(op.Id.Length > 0 ? op.Id : "<unknown operation>", Category.ValidationFailed).Param("operation")
                 .Expected("a valid operation descriptor")
                 .Remedy($"The operation descriptor is invalid: {problem}. Regenerate the SDK or fix the descriptor; nothing was sent.").Fail();
         }
+        CheckImportScope(op, urlOverride ?? baseUrl);
         Register(new[] { op });
         JsonObject supplied;
         if (rawArgs is null)
@@ -742,7 +746,12 @@ public sealed partial class ClientCore
             Confirmed(new ConfirmTarget(op.Id, op.Id, "preview(...)"), op.Agent.Safety, args, opts);
         }
         var method = op.Method;
-        var authResult = await ResolveAuthAsync(op, method, ct).ConfigureAwait(false);
+        CheckDeadline(op, opts, "before the request could be sent");
+        var (authenticated, authResult) = await UntilDeadlineAsync(ResolveAuthAsync(op, method, ct, InsecureHttp(urlOverride ?? baseUrl) ? InsecureHttpAuth : null), opts).ConfigureAwait(false);
+        if (!authenticated)
+        {
+            throw DeadlineExpired(op, "while authenticating");
+        }
         if (authResult.Failed is not null)
         {
             throw new Diag(op.Id, Category.AuthFailed).Remedy(authResult.Failed).Fail();
@@ -778,12 +787,15 @@ public sealed partial class ClientCore
         var (fullUrl, displayUrl) = BuildUrl(op, args, authResult.Plan, urlOverride);
         var headerBag = new HeaderBag();
         BuildHeaders(op, args, opts, authResult.Plan, headerBag);
+        if (InsecureHttp(fullUrl) && (authResult.Plan.Headers.Count > 0 || authResult.Plan.Cookies.Count > 0 || authResult.Plan.Query.Count > 0
+            || headerBag.Entries.Any(h => h.Secret || CredentialHeader(h.Name))))
+            throw new Diag(op.Id, Category.AuthFailed).Remedy(InsecureHttpAuth).Fail();
 
         var paramKeys = new HashSet<string>(op.Arguments.Select(p => p.Key), StringComparer.Ordinal);
         var bodyPaths = SensitiveBodyPaths(op);
         JsonNode? value = null;
         bool hasValue = false;
-        if (!IsSafeMethod(method) || method == "OPTIONS")
+        if (!IsSafeMethod(method) || method is "OPTIONS" or "QUERY")
         {
             (value, hasValue) = Serialize.BodyValue(op, args, paramKeys);
         }
@@ -810,7 +822,7 @@ public sealed partial class ClientCore
             headerBag.Set("Content-Type", encoded.ContentType, false);
         }
         var header = Keys.Header(op);
-        var idem = await IdempotencyKeyAsync(op, args, key, purpose, encoded, ct).ConfigureAwait(false);
+        var idem = await IdempotencyKeyAsync(op, args, key, purpose, encoded, opts, ct).ConfigureAwait(false);
         if (idem is not null)
         {
             headerBag.Set(header, idem, true);
@@ -828,6 +840,12 @@ public sealed partial class ClientCore
         {
             headerBag.Set(op.Agent.Preview.Header ?? "", op.Agent.Preview.Value ?? "", false);
         }
+        if (InsecureHttp(fullUrl) && headerBag.Entries.Any(h =>
+        {
+            bool preserved = idem is not null && h.Name.Equals(header, StringComparison.OrdinalIgnoreCase) && h.Value == idem;
+            return (h.Secret && !preserved) || CredentialHeader(h.Name, preserved);
+        }))
+            throw new Diag(op.Id, Category.AuthFailed).Remedy(InsecureHttpAuth).Fail();
         foreach (var e in headerBag.Entries)
         {
             if (Serialize.ValidHeaderName(e.Name) && Serialize.ValidHeaderValue(e.Value))
@@ -1043,7 +1061,37 @@ public sealed partial class ClientCore
         {
             throw BadBase(op);
         }
+        CheckImportScope(op, full);
         return (full, display);
+    }
+
+    /// <summary>The origin (scheme, host and port) of an absolute http(s) URL without credentials, or null.</summary>
+    private static string? Origin(string? url)
+    {
+        if (url is null || !ValidBaseUrl(url) || !Uri.TryCreate(url, UriKind.Absolute, out var u))
+        {
+            return null;
+        }
+        return u.Scheme.ToLowerInvariant() + "://" + u.IdnHost.ToLowerInvariant() + ":" + u.Port.ToString(CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>
+    /// Refuses a reviewed imported operation whose target lies outside the
+    /// origins its review covers. A malformed or missing scope fails closed.
+    /// </summary>
+    private static void CheckImportScope(OperationDescriptor op, string? target)
+    {
+        if (op.Agent.ImportPolicy is not { Reviewed: true } policy)
+        {
+            return;
+        }
+        var actual = Origin(target);
+        if (actual is not null && policy.AllowedOrigins.Any(scope => Origin(scope) == actual))
+        {
+            return;
+        }
+        throw new Diag(op.Id, Category.ValidationFailed).Param("BaseUrl").Retry(Retryable.Never)
+            .Remedy("The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.").Fail();
     }
 
     private void BuildHeaders(OperationDescriptor op, JsonObject args, CallOptions opts, AuthPlan plan, HeaderBag bag)
@@ -1111,7 +1159,7 @@ public sealed partial class ClientCore
         }
     }
 
-    private async Task<string?> IdempotencyKeyAsync(OperationDescriptor op, JsonObject args, string? supplied, Purpose purpose, EncodedBody encoded, CancellationToken ct)
+    private async Task<string?> IdempotencyKeyAsync(OperationDescriptor op, JsonObject args, string? supplied, Purpose purpose, EncodedBody encoded, CallOptions opts, CancellationToken ct)
     {
         switch (op.Agent.Idempotency.Policy)
         {
@@ -1134,7 +1182,17 @@ public sealed partial class ClientCore
                     Failure Refuse(string why) => new Diag(op.Id, Category.TransportFailed).Retry(Retryable.Never)
                         .Remedy($"The idempotency store failed ({why}), so the call was not sent rather than risk a second key for the same intent. Fix or replace ClientOptions.IdempotencyStore.").Fail();
                     var logical = Util.Sha256Hex(Json.Canonical(args));
-                    await keyLock.WaitAsync(ct).ConfigureAwait(false);
+                    if (Remaining(opts) is TimeSpan left)
+                    {
+                        if (!await keyLock.WaitAsync(left, ct).ConfigureAwait(false))
+                        {
+                            throw DeadlineExpired(op, "while reserving an idempotency key");
+                        }
+                    }
+                    else
+                    {
+                        await keyLock.WaitAsync(ct).ConfigureAwait(false);
+                    }
                     try
                     {
                         try

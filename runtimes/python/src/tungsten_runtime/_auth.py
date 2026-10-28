@@ -17,13 +17,62 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from ipaddress import ip_address
+from urllib.parse import urlsplit
 
 from ._effects import Flow
 from ._json import js_string
-from ._util import b64, is_array, is_record, str_field, utf8
+from ._util import b64, is_array, is_record, looks_sensitive, str_field, utf8
 from .types import HttpMethod
 
-SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE", "QUERY"})
+
+INSECURE_HTTP_AUTH = "Refusing to send credentials over non-loopback HTTP. Use HTTPS, or set ClientOptions.allow_insecure_http = True for intentional insecure transport. Nothing was sent."
+
+
+def insecure_http(url: object, allow: object) -> bool:
+    if allow is True or not isinstance(url, str):
+        return False
+    try:
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme.lower() != "http" or host in {"localhost", "localhost."}:
+            return False
+        try:
+            address = ip_address(host)
+            loopback = address.is_loopback if address.version == 4 else int(address) == 1
+        except ValueError:
+            loopback = False
+        return not loopback
+    except ValueError:
+        return False
+
+
+def credential_header(api_auth: object, name: str, *, preserved_idempotency: bool = False) -> bool:
+    lower = name.lower()
+    # A generated key can match the sensitive-name heuristic. Explicit
+    # credential headers and auth wire names remain credentials even then.
+    if (not preserved_idempotency and looks_sensitive(name)) or lower in {
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+    }:
+        return True
+    for scheme in _records(api_auth):
+        if (
+            scheme.get("kind") == "api_key"
+            and scheme.get("location") == "header"
+            and str(scheme.get("wire", "")).lower() == lower
+        ):
+            return True
+        if scheme.get("kind") == "composite" and any(
+            part.get("kind") == "header"
+            and part.get("from_config") is None
+            and str(part.get("name", "")).lower() == lower
+            for part in _records(scheme.get("parts"))
+        ):
+            return True
+    return False
 
 
 def is_safe_method(method: str) -> bool:
@@ -347,6 +396,7 @@ def resolve_auth(
     auth: Mapping[str, object],
     method: HttpMethod,
     tokens: TokenSource,
+    credential_error: str | None = None,
 ) -> Flow[AuthOk | AuthMissing]:
     """Resolve the credentials of one operation. A token source failure
     becomes an ``AuthMissing`` resolution."""
@@ -372,6 +422,8 @@ def resolve_auth(
             else:
                 missing.extend(attempt.missing)
         if len(missing) == 0:
+            if satisfiers and credential_error is not None:
+                return AuthMissing(credential_error)
             plan = AuthPlan()
             secrets: list[str] = []
             used: list[str] = []

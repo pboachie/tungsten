@@ -75,6 +75,7 @@ fn field_doc(inputs: &Inputs<'_>, path: &[Seg]) -> Option<String> {
     match inputs.kind {
         docs::Kind::Manifest => inputs.manifest.description(path),
         docs::Kind::Agent => inputs.agent.description(path),
+        docs::Kind::Profile => inputs.profile.description(path),
         docs::Kind::Overlay => None,
     }
 }

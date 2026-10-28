@@ -42,6 +42,8 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
     private final Object lock = new Object();
     private Transport.Body body;
     private long collectDeadline;
+    /** The call deadline: it bounds connecting and each reconnect, never an open stream. */
+    private final Long deadline;
 
     EventStream(ClientCore core, OperationDescriptor op, Object args, CallOptions opts, Function<Object, T> decoder,
             TungstenException initial) {
@@ -52,6 +54,7 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
         this.opts = opts;
         this.decoder = decoder;
         this.initial = initial;
+        this.deadline = Deadline.resolve(core.deadline, opts);
     }
 
     /** The streaming operation. */
@@ -315,6 +318,10 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
     }
 
     private Open openStream(String resumeFrom) {
+        return Deadline.within(deadline, () -> openStreamWithin(resumeFrom));
+    }
+
+    private Open openStreamWithin(String resumeFrom) {
         String accept = "";
         for (Map.Entry<String, String> e : core.headers.entrySet()) {
             if (e.getKey().equalsIgnoreCase("accept")) {
@@ -386,6 +393,10 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
         double ceiling = old.lastRetry != null ? old.lastRetry : DEFAULT_RECONNECT_MS;
         ceiling = Math.min(ceiling, core.reconnectMax.toMillis());
         double wait = ceiling - core.random() * 0.25 * ceiling;
+        // A reconnect wait never outlasts the deadline; the reconnect then fails unsent.
+        if (deadline != null) {
+            wait = Math.max(0, Math.min(wait, (deadline - System.nanoTime()) / 1e6));
+        }
         ClientCore.sleep(wait);
         Open fresh = openStream(old.lastId);
         fresh.count = old.count;
@@ -480,17 +491,19 @@ public final class EventStream<T> implements Iterator<Result<StreamEvent<T>>>, I
         }
         int index = o.count;
         String afterEffect = op.isMutation() ? " The call took effect; do not repeat it." : "";
-        Object value;
-        try {
-            value = Json.parse(ev.data());
-        } catch (Json.JsonException e) {
-            throw failure(o, core.diag(op.id(), Category.UNEXPECTED_RESPONSE).param("events[" + index + "]")
-                    .received(Text.envelopeValue(ev.data(), false)).expected("JSON in the data of every event")
-                    .remedy("Event " + index + " of the stream (event \"" + ev.event() + "\") does not carry JSON in its data."
-                            + afterEffect + " Events before it were delivered."));
+        Object value = ev.data();
+        if (!spec.text()) {
+            try {
+                value = Json.parse(ev.data());
+            } catch (Json.JsonException e) {
+                throw failure(o, core.diag(op.id(), Category.UNEXPECTED_RESPONSE).param("events[" + index + "]")
+                        .received(Text.envelopeValue(ev.data(), false)).expected("JSON in the data of every event")
+                        .remedy("Event " + index + " of the stream (event \"" + ev.event() + "\") does not carry JSON in its data."
+                                + afterEffect + " Events before it were delivered."));
+            }
         }
         if (core.validateResponses != ClientOptions.ValidateResponses.OFF && spec.event() != null) {
-            List<Schema.Issue> issues = ClientCore.judge(spec.event(), value);
+            List<Schema.Issue> issues = core.judge(op.id(), "events[" + index + "]", spec.event(), value, null);
             if (!issues.isEmpty()) {
                 Schema.Issue issue = issues.get(0);
                 List<String> path = Schema.segments(issue.path());

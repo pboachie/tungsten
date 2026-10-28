@@ -5,8 +5,47 @@ package tungsten
 import (
 	"context"
 	"fmt"
+	"net/netip"
+	"net/url"
 	"strings"
 )
+
+const insecureHTTPAuth = "Refusing to send credentials over non-loopback HTTP. Use HTTPS, or set ClientOptions.AllowInsecureHTTP = true for intentional insecure transport. Nothing was sent."
+
+func (c *ClientCore) credentialHeader(name string, preservedIdempotency bool) bool {
+	if (!preservedIdempotency && looksSensitive(name)) || strings.EqualFold(name, "Authorization") || strings.EqualFold(name, "Proxy-Authorization") || strings.EqualFold(name, "Cookie") {
+		return true
+	}
+	for _, s := range c.api.Auth {
+		if s.Kind == "api_key" && s.In == InHeader && strings.EqualFold(s.Wire, name) {
+			return true
+		}
+		if s.Kind == "composite" {
+			for _, p := range s.Parts {
+				if p.Kind == "header" && p.FromConfig == "" && strings.EqualFold(p.Name, name) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func insecureHTTP(raw string, allow bool) bool {
+	if allow {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(u.Scheme, "http") {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" || host == "localhost." {
+		return false
+	}
+	ip, err := netip.ParseAddr(host)
+	return err != nil || ip.Is4In6() || !ip.IsLoopback()
+}
 
 // Auth resolution: an operation's security is an OR of AND-sets of scheme
 // names; the first alternative the configured credentials fully satisfy is
@@ -51,7 +90,7 @@ type satisfier struct {
 
 func isSafeMethod(method string) bool {
 	switch method {
-	case "GET", "HEAD", "OPTIONS", "TRACE":
+	case "GET", "HEAD", "OPTIONS", "TRACE", "QUERY":
 		return true
 	}
 	return false
@@ -321,7 +360,7 @@ func (c *ClientCore) apply(ctx context.Context, s *satisfier, plan *authPlan, se
 
 // resolveAuth resolves the credentials for an operation. A problem is the
 // result's failed remediation.
-func (c *ClientCore) resolveAuth(ctx context.Context, op *OperationDescriptor, method string) authResult {
+func (c *ClientCore) resolveAuth(ctx context.Context, op *OperationDescriptor, method string, credentialError string) authResult {
 	api, auth := c.api, c.auth
 	if len(op.Security) == 0 {
 		return authResult{}
@@ -366,6 +405,9 @@ func (c *ClientCore) resolveAuth(ctx context.Context, op *OperationDescriptor, m
 			}
 		}
 		if len(missing) == 0 {
+			if len(sats) > 0 && credentialError != "" {
+				return authResult{failed: credentialError}
+			}
 			var out authResult
 			for _, f := range sats {
 				if problem := c.apply(ctx, f.sat, &out.plan, &out.secrets, &out.oauth); problem != "" {

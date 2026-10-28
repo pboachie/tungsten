@@ -1,0 +1,73 @@
+# Copy this file to .github/workflows/tungsten.yml in your own repository.
+# See README.md in this directory for what it does and how to upgrade it.
+name: tungsten
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# The workflow never writes to the repository and uses no secrets.
+permissions:
+  contents: read
+
+concurrency:
+  group: tungsten-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # The compiler release to install. Change it deliberately, together with
+  # the installer pin below.
+  TUNGSTEN_VERSION: "0.1.3"
+  # install.sh as it was in that release (the v0.1.3 tag), pinned by commit
+  # and by checksum. Upgrade all three values together, see README.md.
+  TUNGSTEN_INSTALLER_URL: "https://raw.githubusercontent.com/pboachie/tungsten/9a8d60e6437fff409041caab4d3f8d87e067604e/install.sh"
+  TUNGSTEN_INSTALLER_SHA256: "11ecf3b5e3f4e345caa24806cf3b969bbdcfdb9daf6cad09b9b8cacddc777f1a"
+  # Directory of your tungsten.yml, relative to the repository root.
+  TUNGSTEN_PROJECT: "."
+  # Never start the commands of `external` targets. A pull request can change
+  # tungsten.yml, so on a pull request that command would run with the job's
+  # privileges. Remove this line only for a repository whose pull requests
+  # you trust, after reading the trust model in README.md.
+  TUNGSTEN_NO_EXTERNAL: "1"
+
+jobs:
+  contract:
+    name: Validate and check generated output
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # install.sh verifies the archive against the release's SHA256SUMS and
+      # its build provenance (GitHub CLI 2.102.0 or newer, preinstalled on
+      # GitHub-hosted runners). Do not set TUNGSTEN_NO_ATTESTATION.
+      - name: Install the pinned tungsten release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          installer="$RUNNER_TEMP/tungsten-install.sh"
+          curl -fsSL --retry 3 -o "$installer" "$TUNGSTEN_INSTALLER_URL"
+          echo "$TUNGSTEN_INSTALLER_SHA256  $installer" | sha256sum --check --strict -
+          sh "$installer" --version "v$TUNGSTEN_VERSION" --dir "$RUNNER_TEMP/tungsten-bin"
+          echo "$RUNNER_TEMP/tungsten-bin" >> "$GITHUB_PATH"
+
+      - name: Show the installed version
+        run: tungsten --version
+
+      - name: Validate the contract
+        run: tungsten check "$TUNGSTEN_PROJECT"
+
+      # Writes nothing. Exits 1 with TG0901 when a generated file is missing,
+      # changed or extra: run `tungsten generate` locally and commit the result.
+      - name: Fail when generated output is stale
+        run: tungsten generate --check "$TUNGSTEN_PROJECT"

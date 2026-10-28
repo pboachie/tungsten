@@ -23,10 +23,12 @@
 //! use the TypeScript arguments layout, as in the C# SDK, so
 //! `failed_parameter` and contract parity match the TypeScript SDK.
 //! Diagnostics: TG1080 to TG1085 (planning/05 "F# SDK"): TG1080 an invalid
-//! option, TG1081 a schema without an F# type, TG1082 a macro outside the
-//! canonical form, TG1083 OpenID Connect sent as a bearer token, TG1084
-//! success bodies that differ by status, TG1085 a discriminated variant
-//! without a tag value. TG1086 to TG1089 are unused.
+//! option, TG1081 a schema without an F# type (an `allOf` without
+//! members), TG1082 a macro outside the canonical form, TG1083 OpenID
+//! Connect sent as a bearer token, TG1084 (reserved: success bodies that
+//! differ by status used to be `JsonNode`; they are a union of the answers
+//! now), TG1085 a discriminated variant without a tag value. TG1086 to
+//! TG1089 are unused.
 
 mod client;
 pub mod fs;
@@ -37,8 +39,7 @@ pub mod types;
 
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::sdk::{
-    self, ClientPlan, DocumentOptions, MemberKind, NameMap, Namer, SdkPlan, SuccessPlan, TypeKind,
-    UnionPlan,
+    self, ClientPlan, DocumentOptions, MemberKind, NameMap, Namer, SdkPlan, TypeKind, UnionPlan,
 };
 use tungsten_emit::{CommentStyle, Emitter, FileSet, TargetConfig, Writer, header, header_text};
 use tungsten_ir::naming::Target;
@@ -161,6 +162,30 @@ impl Emitter for FSharpEmitter {
     fn emit(&self, ir: &Ir, cfg: &TargetConfig, out: &mut FileSet) -> Diagnostics {
         let (opts, mut diags) = Options::resolve(ir, cfg);
         for (path, text) in generate(ir, &opts) {
+            if let Err(e) = out.add(path, text) {
+                diags.push(Diagnostic::error("TG0701", format!("fsharp target: {e}")));
+            }
+        }
+        diags
+    }
+
+    fn uses_sdk_plan(&self) -> bool {
+        true
+    }
+
+    fn supports_prepared(&self, ir: &Ir, plan: &SdkPlan<'_>) -> Diagnostics {
+        notes(ir, plan)
+    }
+
+    fn emit_prepared(
+        &self,
+        ir: &Ir,
+        plan: &SdkPlan<'_>,
+        cfg: &TargetConfig,
+        out: &mut FileSet,
+    ) -> Diagnostics {
+        let (opts, mut diags) = Options::resolve(ir, cfg);
+        for (path, text) in generate_prepared(ir, plan, &opts) {
             if let Err(e) = out.add(path, text) {
                 diags.push(Diagnostic::error("TG0701", format!("fsharp target: {e}")));
             }
@@ -410,8 +435,12 @@ fn descriptor_document(plan: &SdkPlan<'_>, names: &NameMap, opts: &Options) -> S
 /// Every file of the SDK (its notes come from `supports`).
 pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
     let (plan, _) = SdkPlan::new(ir);
-    let names = Namer::new(&plan).names(Target::CSharp, &namer_options());
-    let ctx = context(ir, &plan, &names, opts);
+    generate_prepared(ir, &plan, opts)
+}
+
+fn generate_prepared(ir: &Ir, plan: &SdkPlan<'_>, opts: &Options) -> Vec<(String, String)> {
+    let names = Namer::new(plan).names(Target::CSharp, &namer_options());
+    let ctx = context(ir, plan, &names, opts);
     // The F# sources of the SDK, one part per generator module, in any
     // order: [`compile_order`] places them.
     let parts: Vec<Vec<(String, String)>> =
@@ -424,7 +453,7 @@ pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
     files.push(("README.md".into(), ctx.readme()));
     files.push((
         "tungsten-descriptors.json".into(),
-        descriptor_document(&plan, &names, opts),
+        descriptor_document(plan, &names, opts),
     ));
     files.push(("custom/README.md".into(), ctx.custom_readme()));
     files.sort();
@@ -509,17 +538,6 @@ fn notes(ir: &Ir, plan: &SdkPlan<'_>) -> Diagnostics {
             ));
         }
     }
-    for op in &plan.operations {
-        if let SuccessPlan::ByStatus(_) = op.success {
-            diags.push(Diagnostic::info(
-                "TG1084",
-                format!(
-                    "operation `{}` answers different bodies by status: its typed result is the runtime's JsonNode",
-                    op.op.id.0
-                ),
-            ));
-        }
-    }
     for t in plan.types.values() {
         match &t.kind {
             TypeKind::Union(UnionPlan::Untagged { .. }) => {
@@ -535,20 +553,20 @@ fn notes(ir: &Ir, plan: &SdkPlan<'_>) -> Diagnostics {
                     ));
                 }
             }
-            TypeKind::AllOf(sdk::AllOfPlan::Intersection) => diags.push(Diagnostic::warning(
-                "TG1081",
-                format!(
-                    "type `{}` (an allOf that cannot be merged) has no F# type: the runtime's JsonNode is used",
-                    t.id.0
-                ),
-            )),
-            TypeKind::Enum(sdk::EnumPlan::Mixed { .. }) => diags.push(Diagnostic::warning(
-                "TG1081",
-                format!(
-                    "enum `{}` mixes JSON types and has no F# type: the runtime's JsonNode is used",
-                    t.id.0
-                ),
-            )),
+            TypeKind::AllOf(sdk::AllOfPlan::Intersection)
+                if matches!(
+                    ir.types.get(&t.id).map(|n| &n.shape),
+                    Some(tungsten_ir::Shape::Intersection { members }) if members.is_empty()
+                ) =>
+            {
+                diags.push(Diagnostic::warning(
+                    "TG1081",
+                    format!(
+                        "type `{}` (an allOf without members) has no F# type: the runtime's JsonNode is used",
+                        t.id.0
+                    ),
+                ))
+            }
             _ => {}
         }
     }

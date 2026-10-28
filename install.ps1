@@ -21,14 +21,15 @@ administrator rights are needed.
                  (<base>/<tag>/<asset>), for mirrors and tests; needs -Version
                  (TUNGSTEN_RELEASE_BASE_URL)
   TUNGSTEN_REPO  owner/name of the repository (default: pboachie/tungsten)
-  TUNGSTEN_REQUIRE_ATTESTATION  1: fail unless gh verifies the build attestation
-  TUNGSTEN_NO_ATTESTATION       1: skip attestation (conflicts with REQUIRE=1)
+  TUNGSTEN_REQUIRE_ATTESTATION  1: explicitly require the default provenance policy
+  TUNGSTEN_NO_ATTESTATION       1: choose checksum-only installation (conflicts with REQUIRE=1)
   TUNGSTEN_LIBC                 Linux install.sh only: musl (default) or gnu;
                                not a Windows archive selector
 
 The archive is checked against the release's SHA256SUMS before anything is
-installed, and against its build attestation when the GitHub CLI (gh) is
-available. The directory is not added to PATH; the script prints the command.
+installed. Official release-workflow provenance is required by default,
+including for mirrors; GitHub CLI 2.102.0+ is required. The directory is not
+added to PATH; the script prints the command.
 
 Exit status (when run as a script file): 0 installed (and, with -Init, set up);
 1 nothing installed or the install failed; 4 installed, but the -Init setup was
@@ -61,6 +62,53 @@ function Invoke-GhAttestation([string[]]$Arguments, [string]$OutputFile, [string
     return $LASTEXITCODE
 }
 
+function Assert-AttestationSettings {
+    foreach ($name in @('TUNGSTEN_NO_ATTESTATION', 'TUNGSTEN_REQUIRE_ATTESTATION')) {
+        $value = [Environment]::GetEnvironmentVariable($name)
+        if ($value -and $value -notin @('0', '1')) { Fail "$name must be 0 or 1" }
+    }
+    if ($env:TUNGSTEN_NO_ATTESTATION -eq '1' -and $env:TUNGSTEN_REQUIRE_ATTESTATION -eq '1') {
+        Fail 'TUNGSTEN_NO_ATTESTATION=1 conflicts with TUNGSTEN_REQUIRE_ATTESTATION=1'
+    }
+}
+
+function Require-AttestationVerifier {
+    if ($env:TUNGSTEN_NO_ATTESTATION -eq '1') { return }
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        Fail 'build provenance is required: install GitHub CLI 2.102.0 or newer from https://cli.github.com; TUNGSTEN_NO_ATTESTATION=1 explicitly chooses checksum-only installation'
+    }
+    $output = Join-Path $work 'attestation-out.log'
+    $errorFile = Join-Path $work 'attestation-error.log'
+    $versionCode = Invoke-GhAttestation @('--version') $output $errorFile
+    $versionLine = Get-Content -LiteralPath $output -TotalCount 1
+    if ($versionCode -ne 0 -or $versionLine -notmatch '^gh version (\d+\.\d+\.\d+)(?: |$)' -or [version]$Matches[1] -lt [version]'2.102.0') {
+        Fail 'GitHub CLI 2.102.0 or newer is required for exact workflow attestation verification'
+    }
+    if ((Invoke-GhAttestation @('attestation', 'verify', '--help') $output $errorFile) -ne 0) {
+        Get-Content -LiteralPath $errorFile -Tail 8 | ForEach-Object { Write-Host $_ }
+        Fail 'gh attestation verify is unavailable; install GitHub CLI 2.102.0 or newer'
+    }
+}
+
+function Verify-Attestation([string]$Archive, [string]$Tag) {
+    if ($env:TUNGSTEN_NO_ATTESTATION -eq '1') {
+        Write-Host 'install.ps1: WARNING: checksum-only installation requested; build provenance not verified (TUNGSTEN_NO_ATTESTATION=1)'
+        return
+    }
+    $output = Join-Path $work 'attestation-out.log'
+    $errorFile = Join-Path $work 'attestation-error.log'
+    # Mirror/repository download overrides never select the trusted signer.
+    $arguments = @('attestation', 'verify', $Archive, '--hostname', 'github.com', '--repo', 'pboachie/tungsten',
+        '--signer-workflow', 'pboachie/tungsten/.github/workflows/release.yml',
+        '--cert-oidc-issuer', 'https://token.actions.githubusercontent.com', '--source-ref', "refs/tags/$Tag")
+    if ((Invoke-GhAttestation $arguments $output $errorFile) -ne 0) {
+        Get-Content -LiteralPath $errorFile -Tail 8 | ForEach-Object { Write-Host $_ }
+        Fail 'the official build attestation could not be verified; nothing was installed'
+    }
+    Write-Host 'install.ps1: official build attestation verified'
+}
+
+Assert-AttestationSettings
 $repo = if ($env:TUNGSTEN_REPO) { $env:TUNGSTEN_REPO } else { 'pboachie/tungsten' }
 $build = "from source with: cargo install --git https://github.com/$repo tungsten-cli"
 
@@ -107,6 +155,7 @@ $asset = "$name.zip"
 $work = Join-Path ([IO.Path]::GetTempPath()) ("tungsten-install-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 try {
+    Require-AttestationVerifier
     Write-Host "install.ps1: installing tungsten $Version for $target"
     $sums = Join-Path $work 'SHA256SUMS'
     try {
@@ -130,43 +179,7 @@ try {
     }
     Write-Host 'install.ps1: checksum ok'
 
-    $requireAttestation = $env:TUNGSTEN_REQUIRE_ATTESTATION -eq '1'
-    if ($env:TUNGSTEN_NO_ATTESTATION -eq '1') {
-        if ($requireAttestation) { Fail 'TUNGSTEN_NO_ATTESTATION=1 conflicts with TUNGSTEN_REQUIRE_ATTESTATION=1' }
-        Write-Host 'install.ps1: checksum verified; attestation not checked (TUNGSTEN_NO_ATTESTATION=1)'
-    } elseif ($BaseUrl -ne "https://github.com/$repo/releases/download") {
-        if ($requireAttestation) { Fail 'TUNGSTEN_REQUIRE_ATTESTATION=1 cannot verify a custom release location' }
-        Write-Host 'install.ps1: custom release location: skipping the build attestation check'
-    } else {
-        $attestationOut = Join-Path $work 'attestation-out.log'
-        $attestationError = Join-Path $work 'attestation-error.log'
-        $reason = 'gh is not installed'
-        $usable = $false
-        if (Get-Command gh -ErrorAction SilentlyContinue) {
-            $usable = (Invoke-GhAttestation @('attestation', '--help') $attestationOut $attestationError) -eq 0
-            if (-not $usable) {
-                $reason = 'gh attestation is unavailable; update GitHub CLI (2.49 or newer)'
-                Get-Content -LiteralPath $attestationError -Tail 8 | ForEach-Object { Write-Host $_ }
-            }
-        }
-        if ($usable) {
-            $versionCode = Invoke-GhAttestation @('--version') $attestationOut $attestationError
-            $versionLine = Get-Content -LiteralPath $attestationOut -TotalCount 1
-            if ($versionCode -ne 0 -or $versionLine -notmatch '^gh version (\d+\.\d+\.\d+)(?: |$)' -or [version]$Matches[1] -lt [version]'2.102.0') {
-                Fail 'GitHub CLI 2.102.0 or newer is required for exact workflow attestation verification'
-            }
-            $verifyCode = Invoke-GhAttestation @('attestation', 'verify', $zip, '--repo', $repo, '--signer-workflow', "$repo/.github/workflows/release.yml") $attestationOut $attestationError
-            if ($verifyCode -ne 0) {
-                Get-Content -LiteralPath $attestationError -Tail 8 | ForEach-Object { Write-Host $_ }
-                Fail "the build attestation of $asset could not be verified; nothing was installed"
-            }
-            Write-Host 'install.ps1: build attestation verified'
-        } elseif ($requireAttestation) {
-            Fail "TUNGSTEN_REQUIRE_ATTESTATION=1 but $reason"
-        } else {
-            Write-Host "install.ps1: checksum verified; attestation not checked ($reason)"
-        }
-    }
+    Verify-Attestation $zip $Version
 
     Expand-Archive -Path $zip -DestinationPath $work -Force
     $exe = Join-Path $work "$name\tungsten.exe"

@@ -23,7 +23,7 @@ use tungsten_emit::{StaleReason, stale_files};
 use tungsten_ir::Ir;
 
 use crate::args::DiffArgs;
-use crate::commands::generate::{Emitted, Project, emit_target, select};
+use crate::commands::generate::{Emitted, Project, emit_target, prepare, select};
 use crate::output::{
     CommandName, CommandResult, DiffResult, DiffStatus, FileChange, FileDiff, MigrationAction,
     MigrationReport, SemverLevel, SemverReport, SnapshotState, SurfaceChange, TargetDiff,
@@ -45,7 +45,7 @@ pub(crate) struct DiffOptions {
 }
 
 pub(crate) fn run(args: &DiffArgs, env: &CliEnv, no_external: bool) -> Report {
-    let mut compiled = input::compile(&args.input.path);
+    let mut compiled = input::compile_with_policy(&args.input.path, env.policy.clone());
     let mut report = Report::new(CommandName::Diff);
     report.diagnostics = compiled.diagnostics.0.clone();
     report.sources = std::mem::take(&mut compiled.workspace.sources);
@@ -63,8 +63,9 @@ pub(crate) fn run(args: &DiffArgs, env: &CliEnv, no_external: bool) -> Report {
         semver: args.semver || args.migration,
     };
     let mut changes = vec![];
+    let prepared = prepare(ir, &names);
     for name in &names {
-        let emitted = emit_target(&compiled, ir, &project, name);
+        let emitted = emit_target(&compiled, &prepared, &project, name, false);
         report
             .diagnostics
             .extend(emitted.diagnostics.0.iter().cloned());
@@ -78,33 +79,7 @@ pub(crate) fn run(args: &DiffArgs, env: &CliEnv, no_external: bool) -> Report {
         ));
     }
     if args.migration {
-        for target in &mut changes {
-            if let Some(semver) = &mut target.semver {
-                let previous = ApiSurface::read(Path::new(&target.out)).ok().flatten();
-                let known = previous.as_ref().is_some_and(|s| s.target.is_some());
-                let mut actions: Vec<MigrationAction> = semver
-                    .changes
-                    .iter()
-                    .map(|change| MigrationAction {
-                        rule: change.rule.clone(),
-                        subject: change.subject.clone(),
-                        action: migration_action(change),
-                    })
-                    .collect();
-                if !known {
-                    actions.push(MigrationAction {
-                        rule: "runtime_requirements_unknown".into(),
-                        subject: target.target.clone(),
-                        action: "The previous snapshot does not record dependency requirements; inspect the previous generated package manifest and installed runtimes before upgrading.".into(),
-                    });
-                }
-                semver.migration = Some(MigrationReport {
-                    actions,
-                    runtime_requirements_known: known,
-                    preserves_custom_files: true,
-                });
-            }
-        }
+        changes.iter_mut().for_each(add_migration);
     }
     let level = (args.semver || args.migration)
         .then(|| overall_level(&changes))
@@ -134,6 +109,37 @@ pub(crate) fn run(args: &DiffArgs, env: &CliEnv, no_external: bool) -> Report {
     );
     report.result = Some(CommandResult::Diff(result));
     report
+}
+
+/// Attach migration guidance to a target's surface comparison (`diff
+/// --migration`, upgrade rehearsals). Targets without one are unchanged.
+pub(crate) fn add_migration(target: &mut TargetDiff) {
+    let Some(semver) = &mut target.semver else {
+        return;
+    };
+    let previous = ApiSurface::read(Path::new(&target.out)).ok().flatten();
+    let known = previous.as_ref().is_some_and(|s| s.target.is_some());
+    let mut actions: Vec<MigrationAction> = semver
+        .changes
+        .iter()
+        .map(|change| MigrationAction {
+            rule: change.rule.clone(),
+            subject: change.subject.clone(),
+            action: migration_action(change),
+        })
+        .collect();
+    if !known {
+        actions.push(MigrationAction {
+            rule: "runtime_requirements_unknown".into(),
+            subject: target.target.clone(),
+            action: "The previous snapshot does not record dependency requirements; inspect the previous generated package manifest and installed runtimes before upgrading.".into(),
+        });
+    }
+    semver.migration = Some(MigrationReport {
+        actions,
+        runtime_requirements_known: known,
+        preserves_custom_files: true,
+    });
 }
 
 /// The highest level over the targets that had a snapshot.

@@ -144,6 +144,14 @@ impl Ctx<'_> {
         if self.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
             w.line("do ClientCore.RequireRedirectPolicyV1()");
         }
+        if self
+            .plan
+            .operations
+            .iter()
+            .any(|p| p.op.agent.import_policy.is_some())
+        {
+            w.line("do ClientCore.RequireImportPolicyV1()");
+        }
         w.line("let core = Identity.core Ops.Document options");
         let mut dispatch_args = vec!["core".to_string()];
         for (k, (_, class)) in members.iter().enumerate() {
@@ -181,7 +189,7 @@ impl Ctx<'_> {
             w.blank();
             fs::doc_line(
                 &mut w,
-                "The OAuth2 authorization-code helpers (PKCE, authorization URL, code exchange, refresh) of a scheme.",
+                "The C# core's managed OAuth2 attempts, callback validation, refresh and local logout for a scheme.",
             );
             w.line("member _.OAuth(scheme: string) : OAuthFlow = core.OAuth(scheme)");
         }

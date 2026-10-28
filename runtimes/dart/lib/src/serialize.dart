@@ -36,8 +36,14 @@ final class _Encoded {
 enum _PartKind { text, json, file }
 
 final class _Part {
-  const _Part(this.name, this.kind,
-      {this.text, this.data, this.filename, this.contentType});
+  const _Part(
+    this.name,
+    this.kind, {
+    this.text,
+    this.data,
+    this.filename,
+    this.contentType,
+  });
 
   final String name;
   final _PartKind kind;
@@ -105,7 +111,7 @@ abstract final class _Serialize {
       ];
 
   static List<String> _flat(List<(String, String)> pairs) => [
-        for (final (k, v) in pairs) ...[k, v]
+        for (final (k, v) in pairs) ...[k, v],
       ];
 
   /// One path parameter value, percent-encoded.
@@ -204,7 +210,7 @@ abstract final class _Serialize {
     if (value is List) {
       return [
         for (final v in value)
-          if (v != null) scalar(v)
+          if (v != null) scalar(v),
       ].join(',');
     }
     if (value is Map) {
@@ -219,8 +225,59 @@ abstract final class _Serialize {
     return scalar(value);
   }
 
-  /// name=value of a cookie parameter.
+  /// Whether [c] is an RFC 6265 cookie-octet.
+  static bool _cookieOctet(int c) =>
+      c == 0x21 ||
+      (c >= 0x23 && c <= 0x2B) ||
+      (c >= 0x2D && c <= 0x3A) ||
+      (c >= 0x3C && c <= 0x5B) ||
+      (c >= 0x5D && c <= 0x7E);
+
+  /// A cookie style value as written; only characters a cookie cannot
+  /// carry are percent-encoded.
+  static String _cookieText(String text) {
+    final out = StringBuffer();
+    for (final c in text.runes) {
+      out.write(
+        _cookieOctet(c)
+            ? String.fromCharCode(c)
+            : encodeComponent(String.fromCharCode(c)),
+      );
+    }
+    return out.toString();
+  }
+
+  /// OpenAPI 3.2 cookie style: n=v, n=v1,v2 or exploded n=v1; n=v2 and
+  /// k=v; k2=v2.
+  static String _cookieStyle(ParamDescriptor p, Object? value) {
+    if (value is List) {
+      final items = [
+        for (final v in value)
+          if (v != null) _cookieText(scalar(v)),
+      ];
+      if (p.explode && items.isNotEmpty) {
+        return items.map((i) => '${p.wire}=$i').join('; ');
+      }
+      return '${p.wire}=${items.join(',')}';
+    }
+    if (value is Map) {
+      final pairs = [
+        for (final e in value.entries)
+          if (e.value != null)
+            (_cookieText('${e.key}'), _cookieText(scalar(e.value))),
+      ];
+      if (p.explode && pairs.isNotEmpty) {
+        return pairs.map((kv) => '${kv.$1}=${kv.$2}').join('; ');
+      }
+      return '${p.wire}=${_flat(pairs).join(',')}';
+    }
+    return '${p.wire}=${_cookieText(scalar(value))}';
+  }
+
+  /// name=value of a cookie parameter (form style, values encoded; or
+  /// cookie style).
   static String cookieParam(ParamDescriptor p, Object? value) {
+    if (p.style == 'cookie') return _cookieStyle(p, value);
     if (value is List) return '${p.wire}=${_encodedItems(value).join(',')}';
     if (value is Map)
       return '${p.wire}=${_flat(_encodedPairs(value)).join(',')}';
@@ -319,7 +376,7 @@ abstract final class _Serialize {
           hashed: bytes,
         );
       case 'multipart':
-        return _multipart(value, redact);
+        return _multipart(value, redact, desc?.partContentTypes ?? const {});
       case 'bytes':
         final List<int> data;
         final bin = Binary.tryFrom(value);
@@ -386,10 +443,14 @@ abstract final class _Serialize {
   static Object _multipart(
     Object? value,
     Object? Function(Object? display) redact,
+    Map<String, String> declaredParts,
   ) {
     if (value is! Map) {
       return _SerializationError(
-          'body', 'an object of multipart fields', value);
+        'body',
+        'an object of multipart fields',
+        value,
+      );
     }
     final parts = <_Part>[];
     final display = <String, Object?>{};
@@ -400,14 +461,18 @@ abstract final class _Serialize {
       final list = item is List
           ? [
               for (final x in item)
-                if (x != null) x
+                if (x != null) x,
             ]
           : [item];
       final shown = <Object?>[];
+      final declared = declaredParts[k];
+      final declaredJson = declared != null &&
+          _Classify.jsonMedia(declared.split(';').first.trim().toLowerCase());
       for (final x in list) {
         final bin = Binary.tryFrom(x);
         if (bin != null) {
-          final contentType = bin.contentType ?? 'application/octet-stream';
+          final contentType =
+              bin.contentType ?? declared ?? 'application/octet-stream';
           if (!validHeaderValue(contentType)) {
             return _SerializationError(
               'body',
@@ -415,17 +480,36 @@ abstract final class _Serialize {
               value,
             );
           }
-          shown.add(binaryDisplay(bin.length, bin.contentType));
-          parts.add(_Part(
-            k,
-            _PartKind.file,
-            data: bin.data,
-            filename: bin.filename ?? k,
-            contentType: contentType,
-          ));
+          shown.add(binaryDisplay(bin.length, bin.contentType ?? declared));
+          parts.add(
+            _Part(
+              k,
+              _PartKind.file,
+              data: bin.data,
+              filename: bin.filename ?? k,
+              contentType: contentType,
+            ),
+          );
         } else if (x is Map) {
-          parts.add(_Part(k, _PartKind.json, text: Json.text(x)));
+          parts.add(
+            _Part(
+              k,
+              _PartKind.json,
+              text: Json.text(x),
+              contentType: declaredJson ? declared : 'application/json',
+            ),
+          );
           shown.add(x);
+        } else if (declared != null) {
+          parts.add(
+            _Part(
+              k,
+              _PartKind.json,
+              text: declaredJson ? Json.text(x) : scalar(x),
+              contentType: declared,
+            ),
+          );
+          shown.add(scalar(x));
         } else {
           parts.add(_Part(k, _PartKind.text, text: scalar(x)));
           shown.add(scalar(x));
@@ -458,16 +542,20 @@ abstract final class _Serialize {
       add('--$boundary\r\n');
       switch (p.kind) {
         case _PartKind.file:
-          add('Content-Disposition: form-data; name="${quote(p.name)}"; '
-              'filename="${quote(p.filename ?? p.name)}"\r\n');
+          add(
+            'Content-Disposition: form-data; name="${quote(p.name)}"; '
+            'filename="${quote(p.filename ?? p.name)}"\r\n',
+          );
           add('Content-Type: ${p.contentType}\r\n\r\n');
           out.add(p.data ?? const []);
         case _PartKind.json:
           add('Content-Disposition: form-data; name="${quote(p.name)}"\r\n');
-          add('Content-Type: application/json\r\n\r\n');
+          add('Content-Type: ${p.contentType ?? 'application/json'}\r\n\r\n');
           add(p.text ?? '');
         case _PartKind.text:
-          add('Content-Disposition: form-data; name="${quote(p.name)}"\r\n\r\n');
+          add(
+            'Content-Disposition: form-data; name="${quote(p.name)}"\r\n\r\n',
+          );
           add(p.text ?? '');
       }
       add('\r\n');
@@ -528,7 +616,7 @@ final class _HeaderBag {
 
   List<String> get secrets => [
         for (final e in entries)
-          if (e.secret) e.value
+          if (e.secret) e.value,
       ];
 }
 

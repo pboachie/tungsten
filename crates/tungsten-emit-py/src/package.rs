@@ -17,6 +17,20 @@ fn toml_str(s: &str) -> String {
     string_lit(s)
 }
 
+/// The newest Python minor (`3.x`) the runtime's own `pyproject.toml`
+/// advertises; generated classifiers stop here.
+const NEWEST_PYTHON_MINOR: u32 = 15;
+
+/// The `3.x` minors from the `python_version` floor up to the newest
+/// supported line, for the per-version trove classifiers.
+fn python_minors(floor: &str) -> std::ops::RangeInclusive<u32> {
+    let floor = floor
+        .strip_prefix("3.")
+        .and_then(|m| m.parse().ok())
+        .unwrap_or(NEWEST_PYTHON_MINOR);
+    floor..=NEWEST_PYTHON_MINOR
+}
+
 pub(crate) fn pyproject(plan: &Plan<'_>, opts: &Options, header: &str) -> String {
     let runtime = match &opts.runtime {
         RuntimeDep::Spec(spec) => format!("tungsten-runtime{spec}"),
@@ -50,7 +64,13 @@ pub(crate) fn pyproject(plan: &Plan<'_>, opts: &Options, header: &str) -> String
     for dep in deps {
         out.push_str(&format!("  {},\n", toml_str(&dep)));
     }
-    out.push_str("]\nclassifiers = [\n  \"Programming Language :: Python :: 3\",\n  \"Typing :: Typed\",\n]\n\n");
+    out.push_str("]\nclassifiers = [\n  \"Programming Language :: Python :: 3\",\n");
+    for minor in python_minors(&opts.python_version) {
+        out.push_str(&format!(
+            "  \"Programming Language :: Python :: 3.{minor}\",\n"
+        ));
+    }
+    out.push_str("  \"Typing :: Typed\",\n]\n\n");
     out.push_str(&format!(
         "[tool.hatch.build.targets.wheel]\npackages = [{}]\n",
         toml_str(&opts.module)
@@ -237,6 +257,7 @@ from tungsten_runtime import (
     Issue,
     MacroDescriptor,
     OperationDescriptor,
+    UploadSource,
     Valid,
 )
 
@@ -318,7 +339,7 @@ def _bytes(value: object, handler: ValidatorFunctionWrapHandler, info: Validatio
 
 
 def _bytes_or_file(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
-    return value if _is_file(value) else handler(value)
+    return value if _is_file(value) or isinstance(value, UploadSource) else handler(value)
 
 
 def _serialize_bytes(value: Any) -> Any:
@@ -357,8 +378,9 @@ file object or a ``(filename, content[, content_type])`` tuple only in a
 multipart body, where the runtime reads it."""
 
 type Binary = Annotated[bytes, WrapValidator(_bytes_or_file)]
-"""A whole binary request body: bytes, or a file object or ``(filename,
-content[, content_type])`` tuple the runtime reads."""
+"""A whole binary request body: bytes, a file object or ``(filename,
+content[, content_type])`` tuple the runtime reads, or an ``UploadSource``
+the runtime streams."""
 
 def _integral(value: object) -> object:
     if isinstance(value, float) and value.is_integer():
@@ -509,13 +531,21 @@ def all_of(members: Callable[[], Sequence[Any]]) -> AfterValidator:
     return AfterValidator(check)
 
 
-def tag(wire: str, aliases: Mapping[str, str] | None = None) -> Discriminator:
+def tag(
+    wire: str,
+    aliases: Mapping[str, str] | None = None,
+    default: str | None = None,
+    known: Sequence[str] = (),
+) -> Discriminator:
     """The discriminator of a tagged union whose variants do not all fix the
     tag as a literal field: the value of the ``wire`` property of a mapping,
     or of the field with that wire name of a model. ``aliases`` maps the
     other tag values of the discriminator mapping to their variant's tag
-    (``{"puppy": "dog"}`` when both select ``Dog``)."""
+    (``{"puppy": "dog"}`` when both select ``Dog``). With ``default`` (an
+    OpenAPI 3.2 ``defaultMapping``), a missing tag or one that is not in
+    ``known`` selects the variant tagged ``default``."""
     others = dict(aliases or {})
+    tags = frozenset(known)
 
     def read(value: Any) -> Any:
         found: object = None
@@ -528,7 +558,10 @@ def tag(wire: str, aliases: Mapping[str, str] | None = None) -> Discriminator:
                     break
             else:
                 found = (value.model_extra or {}).get(wire)
-        return others.get(found, found) if isinstance(found, str) else found
+        found = others.get(found, found) if isinstance(found, str) else found
+        if default is not None and (not isinstance(found, str) or found not in tags):
+            return default
+        return found
 
     return Discriminator(read)
 
@@ -712,7 +745,10 @@ fn client_paths(plan: &Plan<'_>) -> Vec<(usize, String)> {
             match m.kind {
                 MemberKind::Op(o) => out.push((o, format!("{prefix}.{}", m.name))),
                 MemberKind::Child(c) => walk(plan, c, &format!("{prefix}.{}", m.name), out),
-                MemberKind::Preview(_) | MemberKind::Pages(_) | MemberKind::Stream(_) => {}
+                MemberKind::Preview(_)
+                | MemberKind::Pages(_)
+                | MemberKind::Stream(_)
+                | MemberKind::Download(_) => {}
             }
         }
     }
@@ -900,15 +936,21 @@ pub(crate) fn readme(
              `auth={{{key}: {{\"flow\": \"authorizationCode\", \"client_id\": \"<client id>\", \
              \"client_secret\": \"<client secret>\", \"redirect_uri\": \"<redirect URI>\"}}}}` \
              (`client_secret` is optional for a public client), send the user to the authorization URL \
-             and exchange the code they come back with. Tokens are kept in `ClientOptions.token_store` \
+             and validate their full callback through the managed attempt. Tokens are kept in `ClientOptions.token_store` \
              (in memory by default), sent on every call, refreshed before they expire and once after a 401. \
-             The asynchronous client's helpers are awaited.\n\n\
+             The asynchronous client's exchange, refresh and logout helpers are awaited.\n\n\
              ```python\n\
+             from tungsten_runtime import IssuerDefense\n\n\
              flow = client.oauth[{key}]\n\
-             pkce = flow.pkce()\n\
-             url = flow.authorization_url(state=state, code_challenge=pkce.challenge)\n\
-             # Redirect the user to url.value; the server sends them back with ?code=...\n\
-             flow.exchange_code(code, code_verifier=pkce.verifier)\n\
+             started = flow.authorization_url(\n    \
+               session_binding=session_binding, s256_supported=True,\n    \
+               issuer_defense=IssuerDefense(\"issuerResponse\", issuer),\n\
+             )\n\
+             if not started.ok:\n    raise RuntimeError(started.error[\"remediation\"])\n\
+             # Open started.value.url in the browser; keep its handle in this session.\n\
+             flow.exchange_code(\n    \
+               started.value.attempt_handle, callback_url, session_binding=session_binding,\n\
+             )\n\
              ```\n\n",
             key = string_lit(name),
         ));

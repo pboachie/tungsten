@@ -10,7 +10,7 @@ Expose a generated API over stdio or Streamable HTTP. The runtime supports discr
 npm install @elysra/tungsten-mcp @elysra/tungsten-runtime
 ```
 
-Requires Node.js 22 or newer. This is an ES module package with TypeScript declarations. The core runtime is a peer dependency. The MCP SDK and QuickJS implementation are installed as dependencies.
+Requires Node.js 22.13 or newer; Node.js 23 requires 23.2 or newer. The root import uses Node's `module.stripTypeScriptTypes` API, including when the optional sandbox is disabled. This is an ES module package with TypeScript declarations. The core runtime is a peer dependency. The MCP SDK and QuickJS implementation are installed as dependencies.
 
 ## Generate and run a server
 
@@ -65,7 +65,25 @@ Adjust paths to your generated outputs. `createCore` creates a separate client f
 - HTTP exposure and API authorization belong to your application. Put non-local HTTP listeners behind appropriate access control. Streamable HTTP can require a bearer token: pass `bearerToken` (compared in constant time) and/or an `authorize(req)` callback in the `connectHttp` options, or start a generated server with `--http <port> --token-env <NAME>` (alias `--bearer-token-env <NAME>`) to read the token from the environment variable `NAME` (the token is never accepted as an argument). Unauthenticated requests get `401` with `WWW-Authenticate: Bearer` before any session is created or looked up. Binding a non-loopback host with neither authentication nor `allowedHosts` emits a startup warning. The HTTP embeddings provider (`search.embeddings.provider: "http"`) adds a startup warning when `apiKeyEnv` is set and the `url` is plain `http://` to a non-loopback host (use `https://`), and reads at most 1 MiB of response; a larger body is an embedder failure and search falls back to BM25.
 - `run_script` on the Deno engine starts the child with a scrubbed environment on every platform. On native Windows only `SystemRoot`, `SYSTEMDRIVE`, `TEMP`, `TMP`, `USERPROFILE`, `PATH` and `PATHEXT` are passed through, and Deno is found by file existence plus a `PATHEXT` extension (`.exe`, `.com`) instead of a POSIX execute-permission check.
 - `run_script` is disabled by default. Enabling it requires an explicit sandbox configuration; Deno execution also requires a Deno executable. The WASM engine runs in a worker thread of the server process with configured bounds. `sandbox.maxConcurrent` (`perSession`, default 4; `global`, default 16) caps scripts running at once.
+- `toolDeadlineMs` (in generated servers, the `<API>_MCP_DEADLINE_MS` environment variable) sets a total deadline for each tool call. It is passed to the TypeScript runtime as `deadlineMs`, so it bounds authentication, retries and backoff, queue admission, response bodies, verification and a whole macro, unlike the client's per-attempt `timeoutMs`. Expiry gives a failure envelope with `code: DEADLINE_EXCEEDED` and nothing more is sent; a mutation already sent reports `OUTCOME_UNKNOWN`, so retry it only with the same idempotency key. Each tool call, including each call a `run_script` script makes, gets its own deadline; for a streamed call it bounds connecting, while `maxStreamMs` bounds collecting. Default: none.
 - Deno limits wall time and V8 heap on all platforms; its additional process data limit is enforced on Linux. On Windows and macOS, `memoryMb` does not bound memory outside the V8 heap, including `ArrayBuffer` backing stores.
+
+## OAuth URL integration boundaries
+
+Generated MCP servers take API access tokens from their environment; the built-in
+server does not provide an interactive OAuth browser launcher. If a custom host
+integration uses an SDK authorization URL, treat that URL as untrusted data and
+follow the [SDK runtime's safe launch guidance](../ts/README.md#opening-authorization-urls-safely).
+Use an application-approved URL policy and a browser API that preserves literal
+data. An HTTPS scheme check alone does not prevent shell injection. Never
+interpolate the URL into shell source, use an opener that does so internally, or
+fall back to a shell after rejection or launch failure. Local embedding commands
+and external emitters are executable configuration that the operator must trust;
+remote query/endpoint text must not select their executable or arguments.
+
+This describes the built-in boundary, not a security certification of custom
+integrations or third-party MCP hosts. Qualify their complete Windows/WSL and
+other platform launch paths separately.
 
 ## Limits
 
@@ -80,3 +98,11 @@ MCP uses the TypeScript runtime and does not supply a file-backed OAuth token st
 ## License
 
 Apache-2.0. The Tungsten compiler is licensed separately under AGPL-3.0-only.
+
+## API credential transport
+
+The session factory delegates API calls to its configured `ClientCore`, which
+requires HTTPS for credentials and OAuth token endpoints. For intentional
+non-loopback HTTP, set `allowInsecureHttp: true` in that core's `ClientOptions`.
+Loopback remains usable without an override; this option controls outgoing API
+requests. Prefer HTTPS when migrating existing authenticated HTTP targets.

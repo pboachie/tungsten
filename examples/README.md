@@ -28,6 +28,8 @@ canonical inputs are never modified.
 | [First python SDK](first-python/README.md) | Generate and build a small python package from a local OpenAPI 3.1 contract. |
 | [First rust SDK](first-rust/README.md) | Generate and build a small rust package from a local OpenAPI 3.1 contract. |
 | [First mcp SDK](first-mcp/README.md) | Generate and build a small mcp package from a local OpenAPI 3.1 contract. |
+| [First Python MCP server (experimental)](first-mcp-python/README.md) | Generate the experimental native Python MCP server on the generated Python SDK and call it over stdio with the official MCP client, without Node. |
+| [Python-backed browser WebMCP tools (experimental)](webmcp-python/README.md) | Register a page's WebMCP tools with registerRemoteWebMcp and run every call on a Python web app through the generated Python SDK, with the app's own sign-in. |
 | [First webmcp SDK](first-webmcp/README.md) | Generate and build a small webmcp package from a local OpenAPI 3.1 contract. |
 | [First agent documentation](first-docs/README.md) | Generate agent-facing documentation from a local OpenAPI 3.1 contract. |
 | [First go SDK](first-go/README.md) | Generate and build a small go package from a local OpenAPI 3.1 contract. |
@@ -44,8 +46,14 @@ canonical inputs are never modified.
 | [Start with JSON Schema models](input-json-schema/README.md) | Declare JSON Schema models together with explicit HTTP routing in an endpoint manifest. |
 | [Preview and confirm a destructive call](preview-confirmation/README.md) | Reject an unconfirmed deletion, preview its identical arguments, then execute with the returned token. |
 | [Develop against a local mock](local-mock/README.md) | Run tungsten mock and call it through the generated Python client with strict response validation. |
+| [Assert retries with saved mock scenarios](mock-scenarios/README.md) | Run an explicit integration against saved 429, interrupted-stream, malformed-response and lost-write scenarios, and fail deliberately broken retries. |
 | [Detect stale generated files in CI](ci-drift/README.md) | Generate, change a copied contract, observe the no-diff gate fail, then regenerate and pass. |
 | [Review semver and migration changes](surface-diff/README.md) | Compare a generated baseline with an additive operation using both diff review modes. |
+| [Bulk sync within a quota](bulk-sync/README.md) | Bound concurrent calls, queue the rest and share 429 backoff with a request scheduler in TypeScript, Python and Rust. |
+| [Stream files up and down](file-transfer/README.md) | Upload a file from disk and download it to a caller-chosen path without holding it in memory, with declared length and SHA-256, byte limits and safe partial-file handling, in TypeScript, Python and Rust. |
+| [Trace calls with local telemetry](telemetry/README.md) | Collect correlated operation, attempt and phase telemetry in memory from the TypeScript, Python and Rust SDKs, with nothing sent anywhere. |
+| [Receive signed webhooks](webhook-receiver/README.md) | Verify signed order.shipped deliveries and decode typed payloads with the TypeScript, Python and Rust SDKs, without a web framework. |
+| [Embed a Rust SDK through JNI](android-jni/README.md) | Call a generated Rust SDK from Java through a small JNI bridge with a bounded deadline and response size, error envelopes, cancellation and cleanup, as an Android app would. |
 
 JSON Schema needs explicit HTTP routing: its recipe uses a versioned endpoint
 manifest with declared models, rather than guessing an API from a bare schema.
@@ -58,7 +66,11 @@ validation parity or live acceptance.
 
 Additional examples have their own runners and prerequisites:
 
+- [Manual release-video walkthrough](release-video/README.md): version-audited Windows terminal recording, local narration, chapters and review-only delivery artifacts.
 - [Six public APIs](showcase/README.md): pinned specifications and regenerated showcase.
 - [External Markdown emitter](external-emitter-markdown/README.md): implement the emitter protocol.
 - [Typed Python SSE](typed-sse/README.md): declare and consume named streams with explicit cleanup.
 - [Response-contract quality](response-contract-audit/README.md): audit weak responses and apply reviewed schema overlays.
+- [GitHub Actions workflow](github-actions/README.md): a copyable workflow, inline or through the reusable [`actions/tungsten`](../actions/tungsten/README.md) action, that installs a pinned release, validates the contract and fails on stale generated output or a stale lock.
+- [Reuse one configuration profile](profile-reuse/README.md): share reviewed defaults across an app and a multi-target library, with explicit per-project overrides.
+- [Restricted agent integration](restricted-agent/README.md): an MCP server that reads freely, confirms writes and never offers deletion, with transport references from a shared profile.

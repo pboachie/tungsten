@@ -30,13 +30,16 @@ pub(crate) const RESERVED_FLAGS: &[&str] = &[
     "all",
     "base-url",
     "body",
+    "checkpoint-file",
     "config",
+    "deadline",
     "dry-run",
     "help",
     "i-understand",
     "idempotency-key",
     "json",
     "max-pages",
+    "max-response-bytes",
     "no-color",
     "profile",
     "timeout",
@@ -353,28 +356,14 @@ fn op_about(op: &Operation) -> String {
     let summary = if op.agent.compact_doc.trim().is_empty() {
         let line = doc_line(op.doc.as_ref());
         if line.is_empty() {
-            format!("{} {}", method(op), op.path.raw)
+            format!("{} {}", op.wire_method(), op.path.raw)
         } else {
             line
         }
     } else {
         sentence(&op.agent.compact_doc)
     };
-    format!("{summary}\n\n{} {}", method(op), op.path.raw)
-}
-
-fn method(op: &Operation) -> &'static str {
-    use tungsten_ir::HttpMethod::*;
-    match op.method {
-        Get => "GET",
-        Put => "PUT",
-        Post => "POST",
-        Delete => "DELETE",
-        Options => "OPTIONS",
-        Head => "HEAD",
-        Patch => "PATCH",
-        Trace => "TRACE",
-    }
+    format!("{summary}\n\n{} {}", op.wire_method(), op.path.raw)
 }
 
 fn macro_flags(

@@ -13,7 +13,7 @@
 
 use serde_json::Value;
 use tungsten_core::Diagnostic;
-use tungsten_openapi::RefTarget;
+use tungsten_openapi::{RefTarget, SpecVersion, Workspace};
 
 use crate::ctx::{Ctx, child, str_of};
 use crate::operations::METHODS;
@@ -28,6 +28,23 @@ pub(crate) struct PathItem<'a> {
     pub item: &'a Value,
     /// The item that holds the `$ref` when fields are written beside it.
     pub local: Option<(RefTarget, &'a Value)>,
+    /// Whether the item is read as OpenAPI 3.2: `query` and
+    /// `additionalOperations` are operations rather than unknown fields of
+    /// an older document.
+    v3_2: bool,
+}
+
+/// Whether the Path Item written at `at` is read as OpenAPI 3.2. A fragment
+/// reached by reference is read as 3.2 when any loaded entry document is.
+pub(crate) fn reads_3_2(ws: &Workspace, at: &RefTarget) -> bool {
+    match ws.documents.get(at.doc).map(|d| &d.version) {
+        Some(SpecVersion::V32(_)) => true,
+        Some(SpecVersion::Fragment) => ws
+            .documents
+            .iter()
+            .any(|d| matches!(d.version, SpecVersion::V32(_))),
+        _ => false,
+    }
 }
 
 impl<'a> PathItem<'a> {
@@ -44,6 +61,7 @@ impl<'a> PathItem<'a> {
             })
             .map(|v| (at.clone(), v));
         Some(Self {
+            v3_2: reads_3_2(cx.ws, at),
             at: resolved,
             item,
             local,
@@ -53,12 +71,47 @@ impl<'a> PathItem<'a> {
     /// The operation `word` and where it is written: beside the `$ref` when
     /// the sibling defines it, else in the referenced item.
     pub fn operation(&self, word: &str) -> Option<(RefTarget, &'a Value)> {
+        if word == "query" && !self.v3_2 {
+            return None;
+        }
         if let Some((at, local)) = &self.local
             && let Some(op) = local.get(word)
         {
             return Some((child(at, word), op));
         }
         self.item.get(word).map(|op| (child(&self.at, word), op))
+    }
+
+    /// The OpenAPI 3.2 `additionalOperations` of the item, in document order:
+    /// each method token as written, where its operation is, and the
+    /// operation. An entry beside the `$ref` wins over the referenced one.
+    /// Tokens that cannot be sent are left out; the frontend reports them
+    /// (TG0142).
+    pub fn additional(&self) -> Vec<(String, RefTarget, &'a Value)> {
+        if !self.v3_2 {
+            return vec![];
+        }
+        let mut out: Vec<(String, RefTarget, &'a Value)> = vec![];
+        let mut sources = vec![];
+        if let Some((at, local)) = &self.local {
+            sources.push((at.clone(), *local));
+        }
+        sources.push((self.at.clone(), self.item));
+        for (at, item) in sources {
+            let Some(Value::Object(map)) = item.get("additionalOperations") else {
+                continue;
+            };
+            let base = child(&at, "additionalOperations");
+            for (token, op) in map {
+                if tungsten_openapi::custom_method_problem(token).is_some()
+                    || out.iter().any(|(t, _, _)| t == token)
+                {
+                    continue;
+                }
+                out.push((token.clone(), child(&base, token), op));
+            }
+        }
+        out
     }
 
     /// The items that own path-level `parameters`, base first. A later

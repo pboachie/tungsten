@@ -58,6 +58,14 @@ serde_json.workspace = true
 url.workspace = true
 schemars.workspace = true
 clap.workspace = true
+ureq = { version = "3.3", default-features = false, features = ["rustls"] }
 
 [lints]
 workspace = true
+
+[target.'cfg(any(target_vendor = "apple", windows))'.dependencies]
+# Scenario-run cancellation in the binary; Linux uses a scoped signalfd instead.
+ctrlc = { version = "=3.5.2", features = ["termination"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "=0.31.3", default-features = false, features = ["signal", "process", "fs", "user"] }

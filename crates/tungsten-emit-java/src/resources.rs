@@ -166,12 +166,7 @@ impl Ctx<'_> {
 
     fn op_label(&self, index: usize) -> String {
         let op = self.plan.operations[index].op;
-        format!(
-            "{} ({} {})",
-            op.id.0,
-            tungsten_emit::sdk::descriptors::method_str(op.method),
-            op.path.raw
-        )
+        format!("{} ({} {})", op.id.0, op.wire_method(), op.path.raw)
     }
 
     fn summary(&self, index: usize) -> String {
@@ -455,6 +450,15 @@ impl Ctx<'_> {
             .collect()
     }
 
+    /// Whether any operation carries an imported-operation policy, which the
+    /// runtime must enforce.
+    fn imported(&self) -> bool {
+        self.plan
+            .operations
+            .iter()
+            .any(|p| p.op.agent.import_policy.is_some())
+    }
+
     /// The client, `Ops`, `Dispatch` and `Macros`: (path, contents).
     pub fn root(&self, infos: &[OpInfo]) -> Vec<(String, String)> {
         let package = &self.opts.package;
@@ -473,6 +477,9 @@ impl Ctx<'_> {
         w.indent();
         if self.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
             w.line("static { io.github.pboachie.tungsten.runtime.ClientCore.requireRedirectPolicyV1(); }");
+        }
+        if self.imported() {
+            w.line("static { io.github.pboachie.tungsten.runtime.ClientCore.requireImportPolicyV1(); }");
         }
         w.line("/** The descriptor document, loaded once. */");
         w.line("public static final Descriptors DOCUMENT = Descriptors.load(Ops.class.getResourceAsStream(\"tungsten-descriptors.json\"));");
@@ -578,7 +585,7 @@ impl Ctx<'_> {
         let schemes = self.code_schemes();
         if !schemes.is_empty() {
             w.blank();
-            w.line("/** The authorization-code helpers of an OAuth2 scheme. */");
+            w.line("/** Managed S256/state attempts of an OAuth2 scheme; completion requires its handle, full callback and owning session binding. */");
             w.block("public OAuthFlow oauth(String scheme) {", "}", |w| {
                 w.line("return core.oauth(scheme);");
             });
@@ -695,10 +702,8 @@ impl Ctx<'_> {
         });
         let request = |info: &OpInfo| -> String {
             format!(
-                "{}.{}.{}",
-                self.resources_package(),
-                self.names.resources[info.resource].class,
-                info.request
+                "{}.{}",
+                self.names.resources[info.resource].class, info.request
             )
         };
         let cases = |w: &mut Writer,
@@ -802,21 +807,34 @@ impl Ctx<'_> {
         w.dedent();
         w.line("}");
         let body = w.finish();
-        let imports = used_imports(
-            vec![
-                runtime("CallOptions"),
-                runtime("ClientCore"),
-                runtime("EventStream"),
-                runtime("MacroDescriptor"),
-                runtime("OperationDescriptor"),
-                runtime("Page"),
-                runtime("PreviewResult"),
-                runtime("Result"),
-                runtime("Typed"),
-                "java.util.List".into(),
-            ],
-            &body,
-        );
+        let mut imports = vec![
+            runtime("CallOptions"),
+            runtime("ClientCore"),
+            runtime("EventStream"),
+            runtime("MacroDescriptor"),
+            runtime("OperationDescriptor"),
+            runtime("Page"),
+            runtime("PreviewResult"),
+            runtime("Result"),
+            runtime("Typed"),
+            "java.util.List".into(),
+        ];
+        // A qualified method reference in expression context can resolve its
+        // package's first segment as a field or parameter (for example client).
+        // Resource classes already have collision-resolved names; import them
+        // in type context and keep the request references local to those types.
+        let resources = infos
+            .iter()
+            .map(|info| {
+                format!(
+                    "{}.{}",
+                    self.resources_package(),
+                    self.names.resources[info.resource].class
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        imports.extend(resources);
+        let imports = used_imports(imports, &body);
         let mut f = java::file(self.ir, &self.opts.package, &imports);
         f.line(body.trim_end());
         f.finish()

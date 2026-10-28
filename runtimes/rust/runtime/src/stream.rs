@@ -105,6 +105,10 @@ struct Open {
     /// The connection is new: events whose id was delivered are skipped until
     /// the first one that is not.
     replaying: bool,
+    /// The request this stream was opened with and its options, resent as is
+    /// (with `Last-Event-ID`) on a reconnect.
+    request: Option<crate::prepare::Detached>,
+    opts: CallOptions,
 }
 
 /// Why a connection ended without finishing the stream.
@@ -137,6 +141,11 @@ pub struct EventStream {
     args: Value,
     opts: CallOptions,
     state: State,
+    /// Bounds connecting and each reconnect, not an open stream.
+    deadline: Option<std::time::Instant>,
+    /// The stream's telemetry, started by the first `next`; reports it
+    /// cancelled when the stream is dropped before its end.
+    telemetry: crate::telemetry::Traversal,
 }
 
 impl std::fmt::Debug for EventStream {
@@ -156,6 +165,7 @@ impl EventStream {
         args: Value,
         opts: CallOptions,
     ) -> Self {
+        let deadline = crate::verify::resolve_deadline(&core, &opts);
         EventStream {
             core,
             op,
@@ -163,6 +173,8 @@ impl EventStream {
             args,
             opts,
             state: State::Idle,
+            deadline,
+            telemetry: crate::telemetry::Traversal::default(),
         }
     }
 
@@ -170,6 +182,22 @@ impl EventStream {
     /// Dropping the returned future before it completes loses nothing: the
     /// state only changes once an await has finished.
     pub async fn next(&mut self) -> Option<StreamResult<Value>> {
+        let span = self
+            .telemetry
+            .span(&self.core, &self.op, crate::TelemetryEntry::Stream);
+        let item = crate::telemetry::scoped(
+            span,
+            crate::verify::with_deadline_at(self.deadline, self.next_item()),
+        )
+        .await;
+        if matches!(self.state, State::Done) {
+            self.telemetry
+                .end(item.as_ref().and_then(|item| item.as_ref().err()));
+        }
+        item
+    }
+
+    async fn next_item(&mut self) -> Option<StreamResult<Value>> {
         loop {
             match &mut self.state {
                 State::Done => return None,
@@ -236,7 +264,7 @@ impl EventStream {
                                 self.state = State::Done;
                                 return Some(Err(error));
                             }
-                            BodyRead::Timeout => Dropped::Idle,
+                            BodyRead::Timeout | BodyRead::Deadline => Dropped::Idle,
                             BodyRead::Lost => Dropped::Lost,
                         }
                     };
@@ -690,7 +718,20 @@ impl ClientCore {
         let prepared = self
             .prepare(op, &args, &opts, Purpose::Call, None, None)
             .await?;
-        let start = match self.send_with(&prepared, &opts, true, None).await? {
+        self.start_stream(op, prepared, opts).await
+    }
+
+    /// Send a prepared stream request and open its event stream.
+    async fn start_stream(
+        &self,
+        op: &OperationDescriptor,
+        prepared: crate::prepare::Prepared<'_>,
+        opts: CallOptions,
+    ) -> std::result::Result<Open, Error> {
+        let start = match self
+            .send_with(&prepared, &opts, crate::send::Handover::Events, None)
+            .await?
+        {
             Sent::Stream(start) => start,
             Sent::Response(response, _) => {
                 let content_type = response.meta.headers.get("content-type").cloned();
@@ -746,6 +787,8 @@ impl ClientCore {
             last_retry: None,
             delivered: HashSet::new(),
             replaying: false,
+            request: Some(prepared.detach()),
+            opts,
         })
     }
 
@@ -777,9 +820,21 @@ impl ClientCore {
         let ceiling = (old.last_retry.unwrap_or(DEFAULT_RECONNECT_MS) as f64).min(cap);
         let wait = ceiling - self.random() * 0.25 * ceiling;
         tokio::time::sleep(crate::util::duration_from_ms(wait)).await;
-        let mut fresh = self
-            .open_stream(op, spec, args, opts, old.last_id.as_deref())
-            .await?;
+        // Resend the request the stream was opened with (auth included), as
+        // the TypeScript and Python runtimes do, rather than preparing it anew.
+        let mut fresh = match old.request.take() {
+            Some(request) => {
+                let mut prepared = request.attach(op);
+                if let Some(id) = old.last_id.as_deref() {
+                    prepared.headers.set("Last-Event-ID", id, false);
+                }
+                self.start_stream(op, prepared, old.opts.clone()).await?
+            }
+            None => {
+                self.open_stream(op, spec, args, opts, old.last_id.as_deref())
+                    .await?
+            }
+        };
         fresh.count = old.count;
         fresh.reconnects = old.reconnects + 1;
         fresh.last_id.clone_from(&old.last_id);
@@ -823,6 +878,7 @@ impl ClientCore {
             key_header: &open.key_header,
             attempts: open.meta.attempts,
             check: open.check.as_ref(),
+            unreplayed: false,
         };
         let diagnostic = if dropped.is_none() || idle {
             let silence = match self.inner.idle_timeout.filter(|_| idle) {
@@ -961,7 +1017,12 @@ impl ClientCore {
                 &open.secrets,
             ))
         };
-        let value: Value = match serde_json::from_str(&event.data) {
+        let parsed = if spec.text {
+            Ok(Value::String(event.data.clone()))
+        } else {
+            serde_json::from_str(&event.data)
+        };
+        let value: Value = match parsed {
             Ok(mut value) => {
                 crate::util::integral_numbers(&mut value);
                 value
@@ -983,7 +1044,14 @@ impl ClientCore {
         let mode = self.inner.validate_responses;
         if mode != ValidateResponses::Off
             && let Some(validator) = &spec.event
-            && let Validation::Invalid(issues) = crate::validate::judge(validator.as_ref(), &value)
+            && let (judged, notes) = crate::validate::judge_noted(validator.as_ref(), &value)
+            && {
+                self.report_unchecked(&op.id, Category::UnexpectedResponse, &notes, |path| {
+                    format!("events[{index}]{}", crate::unchecked::path_text(path))
+                });
+                true
+            }
+            && let Validation::Invalid(issues) = judged
         {
             let issue = issues.first();
             let path: Vec<String> = issue

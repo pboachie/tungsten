@@ -17,6 +17,10 @@ publish.workspace = true
 test = false
 doctest = false
 
+[features]
+# Exposes diagnostic mapping to the private regression harness.
+testing = []
+
 [dependencies]
 tungsten-core.workspace = true
 tungsten-config.workspace = true

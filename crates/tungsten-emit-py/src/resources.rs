@@ -12,7 +12,7 @@
 use tungsten_emit::Writer;
 use tungsten_ir::{IdempotencyKind, OperationStatus, Safety};
 
-use crate::ops::{ArgField, OpShape, arg_doc_line, idempotency_str, method_str, safety_str};
+use crate::ops::{ArgField, OpShape, arg_doc_line, idempotency_str, safety_str};
 use crate::plan::{MemberKind, OpInfo, Plan, ResInfo};
 use crate::py::{
     LINE_LENGTH, Py, PyImports, doc_text, docstring, dunder_all, dunder_all_cmp, paragraphs,
@@ -40,7 +40,7 @@ pub(crate) fn op_doc(
     let mut parts = vec![doc_text(op.doc.as_ref())];
     parts.push(format!(
         "`{} {}` (`{}`). Safety: `{}`.",
-        method_str(op.method),
+        op.wire_method(),
         op.path.raw,
         op.id.0,
         safety_str(a.safety)
@@ -107,6 +107,11 @@ pub(crate) fn op_doc(
     if let Some(p) = &names.stream {
         parts.push(format!("`{p}()` iterates the events of its stream."));
     }
+    if let Some(p) = &names.download {
+        parts.push(format!(
+            "`{p}()` streams the binary body instead of buffering it."
+        ));
+    }
     if shape.bodiless {
         parts.push("A success response without a body yields `value=None`.".into());
     }
@@ -138,6 +143,7 @@ pub(crate) struct OpNames {
     pub preview: Option<String>,
     pub pages: Option<String>,
     pub stream: Option<String>,
+    pub download: Option<String>,
 }
 
 fn op_names(r: &ResInfo<'_>, o: usize) -> OpNames {
@@ -148,6 +154,7 @@ fn op_names(r: &ResInfo<'_>, o: usize) -> OpNames {
             MemberKind::Preview(i) if i == o => names.preview = Some(m.name.clone()),
             MemberKind::Pages(i) if i == o => names.pages = Some(m.name.clone()),
             MemberKind::Stream(i) if i == o => names.stream = Some(m.name.clone()),
+            MemberKind::Download(i) if i == o => names.download = Some(m.name.clone()),
             _ => {}
         }
     }
@@ -272,7 +279,7 @@ fn stream_doc(info: &OpInfo<'_>, names: &OpNames, fields: &[ArgField]) -> String
     let mut parts = vec![format!(
         "The events of `{}` (`{}`): one `StreamEvent` per server-sent event, then either the end of the stream or one final `Err`. An error before the stream starts is the only item. Leaving the loop closes the connection. A dropped stream of a call that is safe to repeat is reconnected with `Last-Event-ID`. The result also has `on`, `collect`, `reduce`, `first` and `cancel`.",
         op.id.0,
-        method_str(op.method)
+        op.wire_method()
     )];
     if let Some(spec) = &op.stream {
         if let Some(done) = &spec.done {
@@ -354,6 +361,32 @@ fn write_method(
                 stream_doc(info, names, &shape.fields),
             )
         }
+        MemberKind::Download(_) => (
+            names.download.clone().unwrap_or_default(),
+            format!(
+                "Result[{}]",
+                if mode == Mode::Async {
+                    "AsyncDownload"
+                } else {
+                    "Download"
+                }
+            ),
+            "download",
+            paragraphs([
+                format!(
+                    "`{}` (`{}`) with its binary success body streamed instead of buffered: a `{}` to read chunk by chunk, hand to a sink with `write_to`, or save with `save_to`. Everything before the answer follows the rules of `{}()`; `opts[\"max_bytes\"]` bounds the body and `opts[\"on_progress\"]` reports it. The connection is held until the body ends or the download is closed.",
+                    info.op.id.0,
+                    info.op.wire_method(),
+                    if mode == Mode::Async {
+                        "AsyncDownload"
+                    } else {
+                        "Download"
+                    },
+                    names.call
+                ),
+                args_section(&shape.fields),
+            ]),
+        ),
         MemberKind::Op(_) | MemberKind::Child(_) => (
             names.call.clone(),
             format!("Result[{}]", shape.success.text()),
@@ -366,6 +399,14 @@ fn write_method(
         Mode::Sync
     } else {
         mode
+    };
+    let params: Vec<String> = if method == "download" {
+        params
+            .into_iter()
+            .map(|p| p.replace("opts: CallOptions | None", "opts: DownloadOptions | None"))
+            .collect()
+    } else {
+        params
     };
     for l in signature(method_mode, &name, &params, &ret, 4) {
         w.line(l);
@@ -415,6 +456,12 @@ pub(crate) fn resource_file(
                 if shapes[o].page_item.is_none() {
                     imports.add("typing", "Any");
                 }
+            }
+            MemberKind::Download(_) => {
+                imports.add("tungsten_runtime", "AsyncDownload");
+                imports.add("tungsten_runtime", "Download");
+                imports.add("tungsten_runtime", "DownloadOptions");
+                imports.add("tungsten_runtime", "Result");
             }
             MemberKind::Stream(o) => {
                 imports.add("tungsten_runtime", "AsyncEventStream");
@@ -495,7 +542,8 @@ pub(crate) fn resource_file(
                 MemberKind::Op(o)
                 | MemberKind::Preview(o)
                 | MemberKind::Pages(o)
-                | MemberKind::Stream(o) => o,
+                | MemberKind::Stream(o)
+                | MemberKind::Download(o) => o,
                 MemberKind::Child(_) => continue,
             };
             w.blank();
@@ -839,6 +887,10 @@ pub(crate) fn init_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> Stri
     if has_macros {
         imports.add(".", "macros");
         exported.push("macros".into());
+    }
+    if tungsten_emit::webhooks::has_webhooks(plan.ir) {
+        imports.add(".", "webhooks");
+        exported.push("webhooks".into());
     }
     exported.sort_by(|a, b| dunder_all_cmp(a, b));
     let mut w = Writer::new("    ");

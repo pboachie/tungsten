@@ -299,6 +299,30 @@ pub fn serialize_tagged<S: Serializer, T: Serialize>(
     }
 }
 
+/// Read a discriminated union's tag, or `default` when the member is
+/// absent or not a string (an OpenAPI 3.2 `defaultMapping`); the value is
+/// kept whole.
+pub fn read_tagged_or<'de, D: Deserializer<'de>>(
+    deserializer: D,
+    property: &str,
+    default: &str,
+) -> Result<(String, Value), D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    let tag = match &value {
+        Value::Object(map) => match map.get(property) {
+            Some(Value::String(tag)) => tag.clone(),
+            _ => default.to_string(),
+        },
+        other => {
+            return Err(D::Error::custom(format!(
+                "expected an object with a `{property}` member, found {}",
+                describe(other)
+            )));
+        }
+    };
+    Ok((tag, value))
+}
+
 /// Read a discriminated union's tag; the value is kept whole.
 pub fn read_tagged<'de, D: Deserializer<'de>>(
     deserializer: D,
@@ -402,6 +426,16 @@ const IPV6: &str = concat!(
     "|(?:H:){1,4}(?::H){1,3}|(?:H:){1,3}(?::H){1,4}|(?:H:){1,2}(?::H){1,5}",
     "|H:(?:(?::H){1,6})|:(?:(?::H){1,7}|:))"
 );
+
+/// Why the regex engine rejected a pattern: its message without the pattern.
+pub fn regex_reason(error: &regex::Error) -> String {
+    let text = error.to_string();
+    text.lines()
+        .rev()
+        .find_map(|line| line.trim().strip_prefix("error: "))
+        .unwrap_or("it is not supported")
+        .to_owned()
+}
 
 fn compile(source: &str) -> Option<Regex> {
     Regex::new(&format!("^(?:{source})$")).ok()
@@ -518,9 +552,19 @@ impl Checker {
         }
     }
 
-    pub fn pattern(&mut self, value: &str, re: &LazyLock<Option<Regex>>, source: &str) {
-        if re.as_ref().is_some_and(|r| !r.is_match(value)) {
-            self.issue(format!("must match the pattern /{source}/"));
+    /// A pattern the regex engine cannot compile accepts the value and is
+    /// noted, so the runtime reports it as a `PATTERN_UNCHECKED` diagnostic.
+    pub fn pattern(&mut self, value: &str, re: &LazyLock<Result<Regex, String>>, source: &str) {
+        match &**re {
+            Ok(r) if !r.is_match(value) => {
+                self.issue(format!("must match the pattern /{source}/"));
+            }
+            Ok(_) => {}
+            Err(reason) => tungsten_runtime::note_unchecked_pattern(
+                &self.path,
+                source,
+                &format!("the Rust regex engine cannot compile it ({reason})"),
+            ),
         }
     }
 

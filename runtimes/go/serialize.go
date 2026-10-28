@@ -268,8 +268,69 @@ func serializeHeaderParam(p *ParamDescriptor, v any) string {
 	return scalar(v)
 }
 
-// serializeCookieParam renders name=value for a cookie parameter.
+// cookieOctet reports whether c is an RFC 6265 cookie-octet.
+func cookieOctet(c rune) bool {
+	return c == 0x21 || (c >= 0x23 && c <= 0x2B) || (c >= 0x2D && c <= 0x3A) || (c >= 0x3C && c <= 0x5B) || (c >= 0x5D && c <= 0x7E)
+}
+
+// cookieText is a cookie style value as written; only characters a cookie
+// cannot carry are percent-encoded.
+func cookieText(text string) string {
+	var b strings.Builder
+	for _, c := range text {
+		if cookieOctet(c) {
+			b.WriteRune(c)
+		} else {
+			b.WriteString(encodeComponent(string(c)))
+		}
+	}
+	return b.String()
+}
+
+// serializeCookieStyle renders the OpenAPI 3.2 cookie style: n=v, n=v1,v2
+// or exploded n=v1; n=v2 and k=v; k2=v2.
+func serializeCookieStyle(p *ParamDescriptor, v any) string {
+	switch t := v.(type) {
+	case []any:
+		var items []string
+		for _, item := range t {
+			if item != nil {
+				items = append(items, cookieText(scalar(item)))
+			}
+		}
+		if p.Explode && len(items) > 0 {
+			parts := make([]string, len(items))
+			for i, item := range items {
+				parts[i] = p.Wire + "=" + item
+			}
+			return strings.Join(parts, "; ")
+		}
+		return p.Wire + "=" + strings.Join(items, ",")
+	case *Object:
+		var pairs []pair
+		for _, k := range t.keys {
+			if item := t.vals[k]; item != nil {
+				pairs = append(pairs, pair{cookieText(k), cookieText(scalar(item))})
+			}
+		}
+		if p.Explode && len(pairs) > 0 {
+			parts := make([]string, len(pairs))
+			for i, kv := range pairs {
+				parts[i] = kv.k + "=" + kv.v
+			}
+			return strings.Join(parts, "; ")
+		}
+		return p.Wire + "=" + strings.Join(flatPairs(pairs), ",")
+	}
+	return p.Wire + "=" + cookieText(scalar(v))
+}
+
+// serializeCookieParam renders name=value for a cookie parameter (form
+// style, values encoded; or cookie style).
 func serializeCookieParam(p *ParamDescriptor, v any) string {
+	if p.Style == StyleCookie {
+		return serializeCookieStyle(p, v)
+	}
 	switch t := v.(type) {
 	case []any:
 		return p.Wire + "=" + strings.Join(encodedItems(t), ",")
@@ -445,14 +506,26 @@ func encodeBody(d *BodyDescriptor, v any, has bool, redact func(any) any) (encod
 				}
 			}
 			shown := []any{}
+			declared := ""
+			for _, part := range d.Parts {
+				if part.Name == k && part.ContentType != "" {
+					declared = part.ContentType
+					break
+				}
+			}
+			essence, _, _ := strings.Cut(declared, ";")
+			declaredJSON := declared != "" && isJSONMedia(strings.ToLower(strings.TrimSpace(essence)))
 			for _, x := range list {
 				if bin, ok := BinaryOf(x); ok {
-					shown = append(shown, binaryDisplay(len(bin.Data), bin.ContentType))
+					ct := bin.ContentType
+					if ct == "" {
+						ct = declared
+					}
+					shown = append(shown, binaryDisplay(len(bin.Data), ct))
 					name := bin.Filename
 					if name == "" {
 						name = k
 					}
-					ct := bin.ContentType
 					if ct == "" {
 						ct = "application/octet-stream"
 					}
@@ -461,8 +534,19 @@ func encodeBody(d *BodyDescriptor, v any, has bool, redact func(any) any) (encod
 					}
 					parts = append(parts, multipartPart{name: k, kind: partFile, data: bin.Data, filename: name, contentType: ct})
 				} else if _, isObj := x.(*Object); isObj {
-					parts = append(parts, multipartPart{name: k, kind: partJSON, text: JSONText(x)})
+					ct := "application/json"
+					if declaredJSON {
+						ct = declared
+					}
+					parts = append(parts, multipartPart{name: k, kind: partJSON, text: JSONText(x), contentType: ct})
 					shown = append(shown, x)
+				} else if declared != "" {
+					text := scalar(x)
+					if declaredJSON {
+						text = JSONText(x)
+					}
+					parts = append(parts, multipartPart{name: k, kind: partJSON, text: text, contentType: declared})
+					shown = append(shown, scalar(x))
 				} else {
 					parts = append(parts, multipartPart{name: k, kind: partText, text: scalar(x)})
 					shown = append(shown, scalar(x))

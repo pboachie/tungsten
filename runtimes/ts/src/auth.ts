@@ -1,13 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Auth resolution (planning/06 "Auth profiles"): an operation's security is
+ * Auth resolution: an operation's security is
  * an OR of AND-sets of scheme names; the first alternative that
  * `ClientOptions.auth` fully satisfies is applied. A composite profile
  * satisfies the scheme names in its `satisfies` list when every part it
  * needs for this request is configured.
  */
 import type { ApiDescriptor, AuthConfig, AuthSchemeDescriptor, HttpMethod, OperationDescriptor } from "./types.js";
-import { bytesToBase64, isRecord, utf8 } from "./util.js";
+import { bytesToBase64, isRecord, looksSensitive, utf8 } from "./util.js";
+
+export const INSECURE_HTTP_AUTH = "Refusing to send credentials over non-loopback HTTP. Use HTTPS, or set ClientOptions.allowInsecureHttp = true for intentional insecure transport. Nothing was sent.";
+
+/** Only literal loopback addresses and the reserved localhost name are exempt. */
+export function insecureHttp(url: unknown, allow: unknown): boolean {
+  if (allow === true || typeof url !== "string") return false;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const loopback = host === "localhost" || host === "localhost." || host === "[::1]"
+      || /^127(?:\.[0-9]{1,3}){3}$/.test(host);
+    return parsed.protocol === "http:" && !loopback;
+  } catch { return false; }
+}
+
+export function credentialHeader(api: ApiDescriptor, name: string, preservedIdempotency = false): boolean {
+  // A generated key may match the generic sensitive-name heuristic. Explicit
+  // credential headers and auth wire names remain credentials even then.
+  if ((!preservedIdempotency && looksSensitive(name)) || /^(authorization|proxy-authorization|cookie)$/i.test(name)) return true;
+  return (Array.isArray(api.auth) ? api.auth : []).some(s =>
+    s.kind === "api_key" ? s.in === "header" && s.wire.toLowerCase() === name.toLowerCase()
+      : s.kind === "composite" && s.parts.some(p => p.kind === "header" && p.fromConfig === null && p.name.toLowerCase() === name.toLowerCase()));
+}
 
 type Composite = Extract<AuthSchemeDescriptor, { kind: "composite" }>;
 type OAuth2 = Extract<AuthSchemeDescriptor, { kind: "oauth2" }>;
@@ -39,7 +62,7 @@ export class TokenError extends Error {
   rejected = false;
 }
 
-const SAFE_METHODS: ReadonlySet<HttpMethod> = new Set<HttpMethod>(["GET", "HEAD", "OPTIONS", "TRACE"]);
+const SAFE_METHODS: ReadonlySet<HttpMethod> = new Set<HttpMethod>(["GET", "HEAD", "OPTIONS", "TRACE", "QUERY"]);
 
 export function isSafeMethod(method: HttpMethod): boolean {
   return SAFE_METHODS.has(method);
@@ -257,6 +280,7 @@ export async function resolveAuth(
   auth: AuthConfig,
   method: HttpMethod,
   tokens: TokenSource,
+  credentialError: string | null = null,
 ): Promise<AuthResolution> {
   const security = Array.isArray(op.security) ? op.security.filter(Array.isArray) : [];
   if (security.length === 0) return { ok: true, plan: { headers: [], cookies: [], query: [] }, secrets: [], oauth: null };
@@ -274,6 +298,7 @@ export async function resolveAuth(
       else missing.push(...attempt.missing);
     }
     if (missing.length === 0) {
+      if (satisfiers.size > 0 && credentialError !== null) return { ok: false, remediation: credentialError };
       const plan: AuthPlan = { headers: [], cookies: [], query: [] };
       const secrets: string[] = [];
       const oauth: string[] = [];

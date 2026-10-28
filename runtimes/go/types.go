@@ -216,6 +216,8 @@ const (
 	StyleSpaceDelimited Style = "space_delimited"
 	StylePipeDelimited  Style = "pipe_delimited"
 	StyleDeepObject     Style = "deep_object"
+	// StyleCookie is the OpenAPI 3.2 RFC 6265 cookie style.
+	StyleCookie Style = "cookie"
 )
 
 // Role is what a parameter is for.
@@ -276,6 +278,17 @@ type BodyDescriptor struct {
 	Required  bool
 	Fields    []MergedField
 	Arg       string
+	// Parts is the declared encoding of multipart fields (OpenAPI
+	// `encoding`), by wire name.
+	Parts []PartDescriptor
+}
+
+// PartDescriptor is the declared encoding of one multipart field:
+// ContentType is the media type each part of the field is sent with, unless
+// a file part carries its own.
+type PartDescriptor struct {
+	Name        string
+	ContentType string
 }
 
 // StatusMatch matches a response status.
@@ -438,6 +451,8 @@ type StreamDescriptor struct {
 	// Flag is the wire name of the boolean body field that selects the
 	// stream; the stream call sets it to true.
 	Flag string
+	// Text marks every event's data as text delivered as written, not JSON.
+	Text bool
 }
 
 // OperationDescriptor is everything the runtime needs to call one
@@ -693,8 +708,14 @@ const (
 
 // ClientOptions configures a client.
 type ClientOptions struct {
-	// Optional ordinary-response byte cap; a positive safe integer. Nil is unbounded.
+	// AllowInsecureHTTP permits credentials over non-loopback HTTP, including OAuth.
+	// Default false: use HTTPS. localhost, 127/8 and ::1 remain usable locally.
+	AllowInsecureHTTP bool
+	// Ordinary-response byte cap; a positive safe integer. Nil inherits the 4 MiB default.
 	MaxResponseBytes *int64
+	// MaxOAuthTokenResponseBytes bounds each authorization-code/refresh response.
+	// Nil uses 64 KiB; require a positive safe integer. Separate from ordinary bodies.
+	MaxOAuthTokenResponseBytes *int64
 	// Redirects may tighten the API policy. The zero value inherits it.
 	Redirects RedirectPolicy
 	// BaseURL defaults to the first server.
@@ -706,6 +727,9 @@ type ClientOptions struct {
 	TokenStore TokenStore
 	// Timeout is the per-attempt timeout (default 30 s).
 	Timeout time.Duration
+	// Deadline is the total deadline of one logical call, see
+	// CallOptions.Deadline. Zero: none (only Timeout per attempt).
+	Deadline time.Duration
 	// Retries overrides the API's per-tier retry defaults, for every tier.
 	Retries          PartialRetry
 	IdempotencyStore IdempotencyStore
@@ -739,7 +763,8 @@ type ClientOptions struct {
 	// error whose code is STREAM_IDLE. Zero: the per-attempt Timeout ends a
 	// silent stream, without a reconnect.
 	IdleTimeout time.Duration
-	// ConfirmationKey signs confirmation tokens; default random per client.
+	// ConfirmationKey signs confirmation tokens. Supply at least 32 cryptographically
+	// random bytes; shorter non-nil keys fail construction. Copied; nil generates a key.
 	ConfirmationKey []byte
 	// Operations the client resolves by id: verification hooks, endpoint
 	// previews and macro steps.
@@ -804,6 +829,19 @@ type CallOptions struct {
 	RefuseConfirmYes bool
 	// Timeout is the per-attempt timeout; zero uses the client's.
 	Timeout time.Duration
+	// Deadline is the total deadline of this call, overriding the client's;
+	// zero uses the client's (none by default). Measured on the monotonic
+	// clock from the call, it bounds authentication, idempotency-key
+	// reservation, every attempt (each one's Timeout is cut to the time
+	// left), retry waits, response bodies and verification; for Pages, Poll
+	// and RunMacro it bounds the whole traversal, poll or macro, and nested
+	// work cannot restart it. No attempt starts after it expires (code
+	// DEADLINE_EXCEEDED); a mutation already sent reports OUTCOME_UNKNOWN,
+	// never a blind replay. For Stream it bounds connecting and each
+	// reconnect, not an open stream (see ClientOptions.IdleTimeout). A
+	// shared OAuth token refresh or idempotency-store write is not
+	// cancelled, only no longer waited for. The caller's ctx still applies.
+	Deadline time.Duration
 	// Verify runs the operation's verification hook after success.
 	Verify  bool
 	Headers map[string]string
@@ -819,8 +857,8 @@ func (o CallOptions) String() string {
 	if o.IdempotencyKey != "" {
 		key = Redacted
 	}
-	return fmt.Sprintf("CallOptions{IdempotencyKey: %q, Confirm: %s, Timeout: %s, Verify: %t, Headers: [%s]}",
-		key, o.Confirm, o.Timeout, o.Verify, strings.Join(names, " "))
+	return fmt.Sprintf("CallOptions{IdempotencyKey: %q, Confirm: %s, Timeout: %s, Deadline: %s, Verify: %t, Headers: [%s]}",
+		key, o.Confirm, o.Timeout, o.Deadline, o.Verify, strings.Join(names, " "))
 }
 
 // --------------------------------------------------------------- results

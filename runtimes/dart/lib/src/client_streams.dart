@@ -24,7 +24,7 @@ extension ClientCoreStreams on ClientCore {
       return;
     }
     final op = resolved as OperationDescriptor;
-    await for (final page in _pagesWith(op, args, options)) {
+    await for (final page in _pagesWith(op, args, _withCallDeadline(options))) {
       switch (page) {
         case Err<Page<Object?>>():
           yield page.cast<Page<T>>();
@@ -104,7 +104,7 @@ extension ClientCoreStreams on ClientCore {
       );
     }
     register([op]);
-    return EventStream<T>._(this, op, args, options, decode);
+    return EventStream<T>._(this, op, args, _withCallDeadline(options), decode);
   }
 
   /// Runs a macro ([macro] a name or a [MacroDescriptor]) with its input
@@ -126,7 +126,8 @@ extension ClientCoreStreams on ClientCore {
     if (resolved is Err<Object?>) return resolved.cast<T>();
     final m = resolved as MacroDescriptor;
     final name = m.name.isEmpty ? '<unknown macro>' : m.name;
-    final result = await _guard(name, () => _runMacroWith(m, input, options));
+    final result = await _guard(
+        name, () => _runMacroWith(m, input, _withCallDeadline(options)));
     return _typed(result, name, decode);
   }
 
@@ -145,8 +146,8 @@ extension ClientCoreStreams on ClientCore {
     if (resolved is Err<Object?>) return resolved.cast<PreviewResult>();
     final m = resolved as MacroDescriptor;
     final name = m.name.isEmpty ? '<unknown macro>' : m.name;
-    final result =
-        await _guard(name, () => _previewMacroWith(m, input, options));
+    final result = await _guard(
+        name, () => _previewMacroWith(m, input, _withCallDeadline(options)));
     return switch (result) {
       Err<Object?>() => result.cast<PreviewResult>(),
       Ok<Object?>() => result.withValue(result.value! as PreviewResult),

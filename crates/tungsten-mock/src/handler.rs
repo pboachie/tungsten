@@ -21,6 +21,7 @@ use crate::params::{self, RequestView, media_essence};
 use crate::reply::{self, Reply, header_text, value_text};
 use crate::route::{Routed, route};
 use crate::rules;
+use crate::scenario::Effect;
 use crate::state::{Action, Answer, Idempotent, Program, State};
 use crate::validate::{Context, Validator, empty_object, json_eq};
 
@@ -29,11 +30,12 @@ const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 /// Bytes read and discarded past the body limit, so the `413` reaches the
 /// client instead of a reset.
 const DRAIN_LIMIT: usize = 4 * 1024 * 1024;
-const CONTROL_PREFIX: &str = "/__tungsten/";
-const CONTROL_PATHS: [(&str, &str); 3] = [
+pub(crate) const CONTROL_PREFIX: &str = "/__tungsten/";
+const CONTROL_PATHS: [(&str, &str); 4] = [
     ("/__tungsten/calls", "GET"),
     ("/__tungsten/reset", "POST"),
     ("/__tungsten/program", "POST"),
+    ("/__tungsten/scenario", "GET"),
 ];
 /// Response headers the mock never copies from the IR.
 const RESERVED_HEADERS: [&str; 4] = [
@@ -515,12 +517,19 @@ fn operation(state: &State, entry: &OpEntry, request: &Exchange<'_>) -> Reply {
         .idempotency_header()
         .and_then(|h| request.view.header(h).map(|k| (h, k)))
     else {
-        return success(model, entry, None, streams(entry, request));
+        return applied(
+            state,
+            entry,
+            success(model, entry, None, streams(entry, request)),
+        );
     };
     let mut fingerprint = format!("{}?{}\n", request.path, request.query).into_bytes();
     fingerprint.extend_from_slice(request.body);
     match state.idempotent(entry.id(), &key, &fingerprint) {
-        Idempotent::Replay(stored) => replayed(stored),
+        Idempotent::Replay(stored) => {
+            state.effect(entry.id(), Effect::Replayed);
+            replayed(stored)
+        }
         Idempotent::Conflict => op_error(
             model,
             entry,
@@ -530,11 +539,23 @@ fn operation(state: &State, entry: &OpEntry, request: &Exchange<'_>) -> Reply {
             &format!("{header} was used with a different request"),
         ),
         Idempotent::Fresh => {
-            let reply = success(model, entry, None, streams(entry, request));
+            let reply = applied(
+                state,
+                entry,
+                success(model, entry, None, streams(entry, request)),
+            );
             state.store(entry.id(), &key, fingerprint, reply.clone());
             reply
         }
     }
+}
+
+/// Count a fresh successful answer as an applied effect for scenario assertions.
+fn applied(state: &State, entry: &OpEntry, reply: Reply) -> Reply {
+    if (200..300).contains(&reply.status) {
+        state.effect(entry.id(), Effect::Applied);
+    }
+    reply
 }
 
 fn check_body(model: &Model, entry: &OpEntry, request: &Exchange<'_>) -> Result<(), String> {
@@ -984,6 +1005,10 @@ fn control(state: &State, method: &str, path: &str, body: Result<Vec<u8>, BodyEr
         );
     }
     let reply = match path {
+        "/__tungsten/scenario" => match state.scenario_report() {
+            Some(report) => Reply::json(200, &serde_json::json!(report)),
+            None => Reply::text(404, "no saved scenario is loaded"),
+        },
         "/__tungsten/calls" => {
             let calls: Vec<Value> = state
                 .calls()
@@ -1033,7 +1058,7 @@ fn parse_programs(model: &Model, bytes: &[u8]) -> Result<Vec<(String, Program)>,
         .collect()
 }
 
-fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), String> {
+pub(crate) fn parse_program(model: &Model, item: &Value) -> Result<(String, Program), String> {
     let Some(object) = item.as_object() else {
         return Err("a program must be a JSON object".into());
     };

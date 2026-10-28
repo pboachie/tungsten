@@ -8,7 +8,9 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::{Map, Value};
 
-use crate::types::{BodyShape, OperationDescriptor, ParamDescriptor, ParamRole, PathSegment};
+use crate::types::{
+    BodyShape, HttpMethod, OperationDescriptor, ParamDescriptor, ParamRole, PathSegment,
+};
 use crate::util::{
     REDACTED, envelope_value, get_path, json_text, looks_sensitive, redact_paths, split_path,
 };
@@ -21,10 +23,30 @@ pub fn arg_params(op: &OperationDescriptor) -> Vec<&ParamDescriptor> {
         .collect()
 }
 
+/// An OpenAPI 3.2 custom method: an RFC 9110 token that is not a case
+/// variant of a standard method and not CONNECT or TRACK.
+fn is_custom_method(token: &str) -> bool {
+    !token.is_empty()
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+        && !HttpMethod::STANDARD
+            .iter()
+            .any(|m| m.as_str().eq_ignore_ascii_case(token))
+        && !["CONNECT", "TRACK"]
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case(token))
+}
+
 /// Structural problems that would make the descriptor unusable, or `None`.
 pub fn descriptor_problem(op: &OperationDescriptor) -> Option<&'static str> {
     if op.id.is_empty() {
         return Some("`id` must be a non-empty string");
+    }
+    if let HttpMethod::Custom(token) = op.method
+        && !is_custom_method(token)
+    {
+        return Some("`method` must be an HTTP method");
     }
     if op
         .params

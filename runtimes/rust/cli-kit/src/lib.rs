@@ -20,12 +20,16 @@
 //!   body as one argument;
 //! - on operations that are not read-only: `--dry-run`, `--yes`,
 //!   `--i-understand`, `--idempotency-key` and `--verify`; on paginated
-//!   operations: `--all` and, with it, `--max-pages <N>`;
+//!   operations: `--all` and, with it, `--max-pages <N>` and (read-only
+//!   operations) `--checkpoint-file <PATH>`;
 //! - global flags: `--json`, `--base-url`, `--profile`, `--config`,
-//!   `--timeout`, `--no-color`;
+//!   `--timeout`, `--deadline`, `--max-response-bytes`, `--no-color`;
 //! - `schema <command>` (the compact JSON Schema of the arguments),
 //!   `operations` (every command with its tier), `auth status` (which
-//!   credentials are present, never their values), `macros <name>` for the
+//!   credentials and login sessions are present, never their values),
+//!   `auth login`, `auth switch` and `auth logout` (browser sign-in to an
+//!   OAuth2 `authorizationCode` scheme with sessions kept in the OS keychain;
+//!   see the `login` and `session` modules), `macros <name>` for the
 //!   table's macros, and `explain-error <CODE|-|@file>` (an error category,
 //!   an API error code from the manifest's remediation tables, or a whole
 //!   envelope read from standard input or a file: its category,
@@ -37,7 +41,7 @@
 //! SDK's auth schemes: `ZROTEXT_BEARER_AUTH`; each part of a composite
 //! profile has its own) and from the config file
 //! `~/.config/<config_dir>/config.toml` (`XDG_CONFIG_HOME` is respected)
-//! whose `[profile.<name>]` tables hold `base_url`, `timeout` and the same
+//! whose `[profile.<name>]` tables hold `base_url`, `timeout`, `deadline` and the same
 //! credential names in lower case. Precedence: flag, then environment, then
 //! profile, then the SDK's default. A flag marked `sensitive` takes `-` (a
 //! line of standard input) or `env:NAME` instead of a value.
@@ -55,7 +59,14 @@
 //!   page (the bytes of the array printed whole, but only one page is held in
 //!   memory); `--max-pages N` stops after N pages, closes the array, exits 0
 //!   and notes on standard error that more pages are available (no limit
-//!   without it). A failure after the first page leaves the array unterminated
+//!   without it). `--checkpoint-file PATH` (with `<PREFIX>_CHECKPOINT_KEY`,
+//!   a secret of at least 32 bytes) saves a sealed checkpoint to PATH,
+//!   owner-only, after each page is written, and a rerun with an existing
+//!   PATH prints only the pages after it; a crash between writing a page
+//!   and saving its checkpoint replays that page, so consumers deduplicate.
+//!   A checkpoint for other arguments, base URL, profile, account or key is
+//!   refused before any request; delete PATH to start over. The file holds
+//!   the provider's cursor: keep it private. A failure after the first page leaves the array unterminated
 //!   and reports the diagnostic on standard error with the failure's exit
 //!   code; a failure before it is the envelope as usual. A preview (`--dry-run`,
 //!   or a command that needs confirmation) is one document with the
@@ -66,6 +77,8 @@
 //!   API shows once, verification results, warnings, and the partial result
 //!   of a failed call.
 //! - The kit never prompts: it behaves the same with or without a terminal.
+//!   The one interactive command, `auth login`, refuses to run without a
+//!   terminal or when `CI` is set.
 //!
 //! # Safety
 //!
@@ -99,7 +112,9 @@ mod exec;
 mod exit;
 mod explain;
 mod host;
+mod login;
 mod render;
+mod session;
 mod spec;
 mod toml;
 mod tree;

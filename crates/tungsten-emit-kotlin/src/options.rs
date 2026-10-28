@@ -10,6 +10,8 @@
 //! | `runtime` | [`DEFAULT_RUNTIME`] | Version of both runtime artifacts, `io.github.pboachie.tungsten:tungsten-runtime-kotlin` and `io.github.pboachie.tungsten:tungsten-runtime`. |
 //! | `runtime_path` | none | The Kotlin runtime layer's directory (`runtimes/kotlin` of a tungsten checkout), relative to the output directory: its sources are compiled into the SDK instead of the `tungsten-runtime-kotlin` dependency. |
 //! | `java_runtime_path` | none | The Java runtime's directory (`runtimes/java`), relative to the output directory: its sources are compiled into the SDK instead of the `tungsten-runtime` dependency. |
+//! | `coroutines` | `false` | Opt in to the coroutine surface: next to each blocking function a `suspend` variant (`<op>Suspend`) with structured cancellation, and next to each `<op>Pages` / `<op>Stream` function a cold `Flow` (`<op>PagesFlow` / `<op>StreamFlow`). The blocking surface is unchanged. Adds the `tungsten-runtime-kotlin-coroutines` artifact (and so `kotlinx-coroutines-core`, [`KOTLINX_COROUTINES`]) to the SDK's dependencies. |
+//! | `coroutines_runtime_path` | none | With `coroutines`: the coroutines layer's directory (`runtimes/kotlin/coroutines` of a tungsten checkout), relative to the output directory: its sources are compiled into the SDK (with a `kotlinx-coroutines-core` dependency) instead of the `tungsten-runtime-kotlin-coroutines` dependency. Ignored without `coroutines`. |
 //!
 //! An invalid value is reported as TG1030 and the default is used.
 
@@ -19,7 +21,11 @@ use tungsten_ir::Ir;
 use tungsten_ir::naming::{self, Case, Role, Target};
 
 /// The runtime version generated SDKs depend on.
-pub const DEFAULT_RUNTIME: &str = "0.1.5";
+pub const DEFAULT_RUNTIME: &str = tungsten_config::option_fields::KOTLIN_RUNTIME;
+
+/// The `kotlinx-coroutines-core` version the coroutines layer is built and
+/// tested with, and that an SDK compiling the layer from source depends on.
+pub const KOTLINX_COROUTINES: &str = "1.10.2";
 
 /// Resolved target options.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +38,9 @@ pub struct Options {
     pub runtime: String,
     pub runtime_path: Option<String>,
     pub java_runtime_path: Option<String>,
+    /// Opt-in `suspend` variants and `Flow`s (off by default).
+    pub coroutines: bool,
+    pub coroutines_runtime_path: Option<String>,
 }
 
 impl Options {
@@ -80,11 +89,29 @@ impl Options {
         )
         .unwrap_or_else(|| format!("com.example.{api}"));
         let version = read("version", &is_version, "a version such as 1.2.3")
-            .unwrap_or_else(|| "0.1.0".to_string());
+            .unwrap_or_else(|| tungsten_config::option_fields::PACKAGE_VERSION.to_string());
         let runtime = read("runtime", &is_version, "a runtime version such as 0.1.0")
             .unwrap_or_else(|| DEFAULT_RUNTIME.to_string());
         let runtime_path = read("runtime_path", &is_path, "a non-empty relative path");
         let java_runtime_path = read("java_runtime_path", &is_path, "a non-empty relative path");
+        let coroutines_runtime_path = read(
+            "coroutines_runtime_path",
+            &is_path,
+            "a non-empty relative path",
+        );
+        let coroutines = match cfg.options.get("coroutines") {
+            None => false,
+            Some(v) => v.as_bool().unwrap_or_else(|| {
+                diags.push(
+                    Diagnostic::warning(
+                        "TG1030",
+                        "kotlin target option `coroutines` must be true or false; the default is used",
+                    )
+                    .with_help(format!("got {v}")),
+                );
+                false
+            }),
+        };
         (
             Options {
                 group,
@@ -94,6 +121,8 @@ impl Options {
                 runtime,
                 runtime_path,
                 java_runtime_path,
+                coroutines,
+                coroutines_runtime_path,
             },
             diags,
         )

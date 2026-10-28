@@ -21,6 +21,7 @@ public final class RuntimeIdentity {
                     .confirmYes("Confirm.YES")
                     .baseUrl("baseUrl")
                     .timeout("`timeout`")
+                    .deadline("`deadline`")
                     .idleTimeout("`idleTimeout`")
                     .maxEventBytes("maxEventBytes")
                     .build();
@@ -32,6 +33,7 @@ public final class RuntimeIdentity {
     private final String confirmYes;
     private final String baseUrl;
     private final String timeout;
+    private final String deadline;
     private final String idleTimeout;
     private final String maxEventBytes;
 
@@ -43,6 +45,7 @@ public final class RuntimeIdentity {
         this.confirmYes = b.confirmYes;
         this.baseUrl = b.baseUrl;
         this.timeout = b.timeout;
+        this.deadline = b.deadline;
         this.idleTimeout = b.idleTimeout;
         this.maxEventBytes = b.maxEventBytes;
     }
@@ -87,6 +90,11 @@ public final class RuntimeIdentity {
         return timeout;
     }
 
+    /** The total operation deadline option, as written in prose ({@code `deadline`}). */
+    public String deadline() {
+        return deadline;
+    }
+
     /** The stream idle timeout option, as written in prose ({@code `idleTimeout`}). */
     public String idleTimeout() {
         return idleTimeout;
@@ -106,6 +114,7 @@ public final class RuntimeIdentity {
         private String confirmYes = "Confirm.YES";
         private String baseUrl = "baseUrl";
         private String timeout = "`timeout`";
+        private String deadline = "`deadline`";
         private String idleTimeout = "`idleTimeout`";
         private String maxEventBytes = "maxEventBytes";
 
@@ -136,6 +145,11 @@ public final class RuntimeIdentity {
 
         public Builder timeout(String value) {
             timeout = Objects.requireNonNull(value);
+            return this;
+        }
+
+        public Builder deadline(String value) {
+            deadline = Objects.requireNonNull(value);
             return this;
         }
 

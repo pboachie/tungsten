@@ -225,8 +225,7 @@ pub type Outcome = Result<Option<Value>>;
 
 // ----------------------------------------------------------- descriptors
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HttpMethod {
     Get,
     Put,
@@ -236,9 +235,25 @@ pub enum HttpMethod {
     Head,
     Patch,
     Trace,
+    Query,
+    /// An OpenAPI 3.2 `additionalOperations` method, sent exactly as
+    /// written. It is treated as unsafe and not idempotent.
+    Custom(&'static str),
 }
 
 impl HttpMethod {
+    pub(crate) const STANDARD: [HttpMethod; 9] = [
+        HttpMethod::Get,
+        HttpMethod::Put,
+        HttpMethod::Post,
+        HttpMethod::Delete,
+        HttpMethod::Options,
+        HttpMethod::Head,
+        HttpMethod::Patch,
+        HttpMethod::Trace,
+        HttpMethod::Query,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             HttpMethod::Get => "GET",
@@ -249,7 +264,32 @@ impl HttpMethod {
             HttpMethod::Head => "HEAD",
             HttpMethod::Patch => "PATCH",
             HttpMethod::Trace => "TRACE",
+            HttpMethod::Query => "QUERY",
+            HttpMethod::Custom(token) => token,
         }
+    }
+}
+
+impl Serialize for HttpMethod {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+/// Only standard methods are read back: a custom method exists only as a
+/// token compiled into a descriptor.
+impl<'de> Deserialize<'de> for HttpMethod {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        HttpMethod::STANDARD
+            .into_iter()
+            .find(|m| m.as_str() == name)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown HTTP method `{name}`")))
     }
 }
 
@@ -270,6 +310,8 @@ pub enum ParamStyle {
     SpaceDelimited,
     PipeDelimited,
     DeepObject,
+    /// OpenAPI 3.2 RFC 6265 cookie style: values sent as written.
+    Cookie,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -336,6 +378,26 @@ pub struct BodyDescriptor {
     pub encoding: BodyEncoding,
     pub required: bool,
     pub shape: BodyShape,
+    /// Per-part encoding of a multipart body, by wire field name.
+    pub parts: Vec<PartDescriptor>,
+}
+
+/// The declared encoding of one multipart field (OpenAPI `encoding`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartDescriptor {
+    pub name: String,
+    /// The media type each part of the field is sent with, unless a file
+    /// part carries its own.
+    pub content_type: Option<String>,
+    /// Headers with a fixed value sent on each part of the field.
+    pub headers: Vec<PartHeader>,
+}
+
+/// A header with a fixed value on a multipart part.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartHeader {
+    pub name: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -551,6 +613,8 @@ pub struct StreamDescriptor {
     /// Wire name of the boolean request body field that selects the stream;
     /// the stream call sets it to `true`.
     pub flag: Option<String>,
+    /// Every event's `data` is text delivered as written, not JSON.
+    pub text: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -824,6 +888,9 @@ pub type DiagnosticSink = Arc<dyn Fn(&Diagnostic) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct ClientOptions {
+    /// Explicitly permits credentials over non-loopback HTTP, including OAuth.
+    /// Default false; localhost, 127/8 and ::1 remain usable locally.
+    pub allow_insecure_http: bool,
     /// May tighten the API default; None policy always wins.
     pub redirects: Option<RedirectPolicy>,
     /// Defaults to the first server.
@@ -836,8 +903,13 @@ pub struct ClientOptions {
     pub token_store: Option<Arc<dyn TokenStore>>,
     /// Per-attempt timeout. Default 30 s.
     pub timeout: Duration,
-    /// Optional ordinary-response byte cap. Positive safe integer; unset is unbounded.
+    /// Total deadline of one logical call (see [`CallOptions::deadline`]).
+    /// Default `None`: only `timeout` per attempt.
+    pub deadline: Option<Duration>,
+    /// Ordinary-response byte cap. Positive safe integer; None inherits the 4 MiB default.
     pub max_response_bytes: Option<u64>,
+    /// Separate code/refresh token response cap; positive safe integer, default 64 KiB.
+    pub max_oauth_token_response_bytes: u64,
     /// Overrides the API's per-tier retry defaults field by field, for every tier.
     pub retries: PartialRetryOptions,
     pub idempotency_store: Option<Arc<dyn IdempotencyStore>>,
@@ -876,8 +948,9 @@ pub struct ClientOptions {
     /// whose `code` is `STREAM_IDLE`. `None`: the per-attempt `timeout`,
     /// which ends the stream without a reconnect.
     pub idle_timeout: Option<Duration>,
-    /// Overrides the key used to sign confirmation tokens. Default: random
-    /// per client instance.
+    /// Overrides the key used to sign confirmation tokens. Supply at least 32
+    /// cryptographically random bytes; shorter keys fail construction.
+    /// Default: random per client instance.
     pub confirmation_key: Option<Vec<u8>>,
     /// Operations the core can resolve by id: verification hooks, endpoint
     /// previews and macro steps.
@@ -893,17 +966,33 @@ pub struct ClientOptions {
     pub now: Option<Arc<dyn Fn() -> u64 + Send + Sync>>,
     /// Random number in [0, 1) for retry jitter.
     pub random: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+    /// Bounds the requests this client has in flight and waiting, and shares
+    /// rate-limit pauses between them. Clone one scheduler into several
+    /// clients that share a quota. Default: none, every call is sent at once.
+    pub scheduler: Option<crate::RequestScheduler>,
+    /// The tenant or principal this client calls for. Clients sharing a
+    /// scheduler keep separate capacity, queues and pauses per tenant.
+    pub tenant: Option<String>,
+    /// Receives local telemetry events for `call()` and `call_typed()`: the
+    /// operation, each attempt, and the authentication, scheduler queue and
+    /// retry backoff phases. Off by default; nothing is ever sent anywhere by
+    /// the runtime. Events hold only bounded values (no URLs, headers,
+    /// bodies, credentials or error text); see [`crate::TelemetryEvent`].
+    pub telemetry: Option<Arc<dyn crate::TelemetryObserver>>,
 }
 
 impl Default for ClientOptions {
     fn default() -> Self {
         ClientOptions {
+            allow_insecure_http: false,
             redirects: None,
             base_url: None,
             auth: AuthConfig::new(),
             token_store: None,
             timeout: Duration::from_secs(30),
+            deadline: None,
             max_response_bytes: None,
+            max_oauth_token_response_bytes: crate::oauth_attempt::TOKEN_RESPONSE_BYTES,
             retries: PartialRetryOptions::default(),
             idempotency_store: None,
             middleware: Vec::new(),
@@ -921,6 +1010,9 @@ impl Default for ClientOptions {
             http_client: None,
             now: None,
             random: None,
+            scheduler: None,
+            tenant: None,
+            telemetry: None,
         }
     }
 }
@@ -931,6 +1023,7 @@ impl fmt::Debug for ClientOptions {
             .field("base_url", &self.base_url)
             .field("auth", &self.auth)
             .field("timeout", &self.timeout)
+            .field("deadline", &self.deadline)
             .field("max_response_bytes", &self.max_response_bytes)
             .field("validate_responses", &self.validate_responses)
             .finish_non_exhaustive()
@@ -974,6 +1067,19 @@ pub struct CallOptions {
     pub allow_confirm_true: bool,
     /// Per-attempt timeout; default: the client's.
     pub timeout: Option<Duration>,
+    /// Total deadline of this call, overriding the client's; `None` inherits
+    /// it and zero means none. Measured on a monotonic clock from the call,
+    /// it bounds authentication, idempotency-key reservation, every attempt
+    /// (each one's `timeout` is cut to the time left), retry waits, response
+    /// bodies and verification; for pages, polls and macros the whole
+    /// traversal, poll or macro. No attempt starts after it expires (`code`
+    /// `DEADLINE_EXCEEDED`). For `stream()` it bounds connecting and each
+    /// reconnect, not an open stream (see `idle_timeout`). A mutation already
+    /// sent reports `OUTCOME_UNKNOWN`, never a blind replay. A token
+    /// request runs as its own task: the call stops waiting for it at the
+    /// deadline, but it is not cancelled, so a shared refresh still serves
+    /// other callers.
+    pub deadline: Option<Duration>,
     /// Override the client ordinary-response byte cap.
     pub max_response_bytes: Option<u64>,
     /// Run the operation's verification hook after success.
@@ -993,6 +1099,7 @@ impl fmt::Debug for CallOptions {
             .field("allow_confirm_true", &self.allow_confirm_true)
             .field("max_pages", &self.max_pages)
             .field("timeout", &self.timeout)
+            .field("deadline", &self.deadline)
             .field("max_response_bytes", &self.max_response_bytes)
             .field("verify", &self.verify)
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
@@ -1008,6 +1115,7 @@ impl Default for CallOptions {
             confirm: None,
             allow_confirm_true: true,
             timeout: None,
+            deadline: None,
             max_response_bytes: None,
             verify: false,
             headers: BTreeMap::new(),

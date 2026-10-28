@@ -24,7 +24,9 @@
 //!   optional one `T?` that is left out when null, an optional nullable one
 //!   `Patch<T>`), members the schema does not declare kept in
 //!   `additionalProperties`, value equality; an enhanced enum with its wire
-//!   values per string or integer enum; a sealed class with one final
+//!   values per enum (strings, integers, or JSON values of mixed types); a
+//!   class with one typed part per member of an `allOf` that cannot be
+//!   merged; a sealed class with one final
 //!   subclass per variant per union (decoded by tag, by value, or by the
 //!   first variant that accepts the value); `Uint8List` for bytes;
 //! - `lib/src/custom/extensions.dart`, created once and never overwritten.
@@ -41,9 +43,11 @@
 //! `tungsten_emit::header` stamp, and the Dart is laid out as
 //! `dart format` (short style, language 3.6) lays it out. Diagnostics:
 //! TG1070 (an invalid target option, from `emit`) and TG1071 (a schema
-//! without a Dart type: an `allOf` that cannot be merged or an enum that
-//! is not of strings or integers is the JSON value `Object?`, from
-//! `supports`).
+//! without a Dart type: an `allOf` without members, or an enum with an
+//! integer beyond 64 bits, is the JSON value `Object?`, from `supports`).
+//! An `allOf` that cannot be merged into one record is a class of typed
+//! parts, and an enum of mixed JSON types is an enhanced enum of its JSON
+//! values.
 
 mod dart;
 mod models;
@@ -58,8 +62,8 @@ use tungsten_emit::sdk::{
     AllOfPlan, EnumPlan, NameMap, Namer, NamerOptions, Scope, SdkPlan, TypeKind,
 };
 use tungsten_emit::{CommentStyle, Emitter, FileSet, TargetConfig, header};
-use tungsten_ir::Ir;
 use tungsten_ir::naming::Target;
+use tungsten_ir::{Ir, Shape};
 
 pub use options::Options;
 
@@ -88,13 +92,43 @@ impl Emitter for DartEmitter {
         }
         diags
     }
+
+    fn uses_sdk_plan(&self) -> bool {
+        true
+    }
+
+    fn supports_prepared(&self, _ir: &Ir, plan: &SdkPlan<'_>) -> Diagnostics {
+        let mut diags = notes(plan);
+        diags.extend(sdk::notes(plan));
+        diags
+    }
+
+    fn emit_prepared(
+        &self,
+        ir: &Ir,
+        plan: &SdkPlan<'_>,
+        cfg: &TargetConfig,
+        out: &mut FileSet,
+    ) -> Diagnostics {
+        let (opts, mut diags) = Options::resolve(ir, cfg);
+        for (path, text) in generate_prepared(ir, plan, &opts) {
+            if let Err(e) = out.add(path, text) {
+                diags.push(Diagnostic::error("TG0701", format!("dart target: {e}")));
+            }
+        }
+        diags
+    }
 }
 
 /// Every file of the package: (path relative to the target directory,
 /// contents), sorted by path.
 pub fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
     let (plan, _) = SdkPlan::new(ir);
-    let g = Gen::new(&plan, opts);
+    generate_prepared(ir, &plan, opts)
+}
+
+fn generate_prepared(_ir: &Ir, plan: &SdkPlan<'_>, opts: &Options) -> Vec<(String, String)> {
+    let g = Gen::new(plan, opts);
     let mut libraries = models::libraries(&g);
     libraries.extend(sdk::libraries(&g));
     let mut files = package::files(&g, &libraries);
@@ -124,6 +158,7 @@ pub(crate) struct Library {
 /// runtime and the models (and users who import both packages) never see
 /// two declarations of a name.
 const TAKEN_TYPES: &[&str] = &[
+    "AuthorizationAttempt",
     "Binary",
     "BodyDescriptor",
     "CallOptions",
@@ -141,9 +176,11 @@ const TAKEN_TYPES: &[&str] = &[
     "Err",
     "EventStream",
     "Expr",
+    "FencedTokenStore",
     "FormatException",
     "IdempotencyStore",
     "Issue",
+    "IssuerDefense",
     "Jitter",
     "Json",
     "JsonEncodable",
@@ -154,6 +191,7 @@ const TAKEN_TYPES: &[&str] = &[
     "MemoryTokenStore",
     "Middleware",
     "Models",
+    "OAuthCancellation",
     "OAuthFlow",
     "Ok",
     "OperationDescriptor",
@@ -268,21 +306,29 @@ impl<'p, 'a> Gen<'p, 'a> {
 fn notes(plan: &SdkPlan<'_>) -> Diagnostics {
     let mut diags = Diagnostics::new();
     for t in plan.types.values() {
-        match &t.kind {
-            TypeKind::AllOf(AllOfPlan::Intersection) => diags.push(Diagnostic::warning(
-                "TG1071",
-                format!(
-                    "type `{}` (an allOf that cannot be merged) has no Dart type: the Dart SDK uses its JSON value (`Object?`)",
-                    t.id.0
-                ),
-            )),
-            TypeKind::Enum(EnumPlan::Mixed { .. }) => diags.push(Diagnostic::warning(
-                "TG1071",
-                format!(
-                    "enum `{}` is not a string or integer enum and has no Dart type: the Dart SDK uses its JSON value (`Object?`)",
-                    t.id.0
-                ),
-            )),
+        match (&t.kind, plan.ir.types.get(&t.id).map(|n| &n.shape)) {
+            (TypeKind::AllOf(AllOfPlan::Intersection), Some(Shape::Intersection { members }))
+                if members.is_empty() =>
+            {
+                diags.push(Diagnostic::warning(
+                    "TG1071",
+                    format!(
+                        "type `{}` (an allOf without members) has no Dart type: the Dart SDK uses its JSON value (`Object?`)",
+                        t.id.0
+                    ),
+                ));
+            }
+            (TypeKind::Enum(EnumPlan::Mixed { .. }), Some(Shape::Enum { values, .. }))
+                if !models::representable(values) =>
+            {
+                diags.push(Diagnostic::warning(
+                    "TG1071",
+                    format!(
+                        "enum `{}` has an integer beyond 64 bits and has no Dart type (a Dart int is 64 bits): the Dart SDK uses its JSON value (`Object?`)",
+                        t.id.0
+                    ),
+                ));
+            }
             _ => {}
         }
     }

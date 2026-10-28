@@ -79,7 +79,11 @@ export function canonicalJson(value: unknown): string {
       if (seen.has(v)) throw new TypeError("cyclic value");
       seen.add(v);
       const out: Record<string, unknown> = {};
-      for (const key of Object.keys(v).sort()) if (v[key] !== undefined) out[key] = walk(v[key]);
+      for (const key of Object.keys(v).sort()) {
+        if (v[key] === undefined) continue;
+        // JSON member names are data, including the legacy __proto__ setter.
+        Object.defineProperty(out, key, { value: walk(v[key]), enumerable: true, configurable: true, writable: true });
+      }
       seen.delete(v);
       return out;
     }
@@ -224,7 +228,9 @@ export function skeleton(schema: unknown, depth = 0): unknown {
       const out: Record<string, unknown> = {};
       const properties = isRecord(schema.properties) ? schema.properties : {};
       const required = Array.isArray(schema.required) ? schema.required.filter((r): r is string => typeof r === "string") : [];
-      for (const name of required) out[name] = skeleton(properties[name], depth + 1);
+      for (const name of required) {
+        Object.defineProperty(out, name, { value: skeleton(properties[name], depth + 1), enumerable: true, configurable: true, writable: true });
+      }
       return out;
     }
     default:

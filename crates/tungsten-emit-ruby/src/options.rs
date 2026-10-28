@@ -17,7 +17,8 @@ use tungsten_ir::Ir;
 use tungsten_ir::naming::{self, Case};
 
 /// Default requirement on the `tungsten-runtime` gem.
-pub const DEFAULT_RUNTIME_REQUIREMENT: &str = "~> 0.1.5";
+pub const DEFAULT_RUNTIME_REQUIREMENT: &str =
+    tungsten_config::option_fields::RUBY_RUNTIME_REQUIREMENT;
 
 /// Constants a generated module must not be named: the runtime's root and
 /// the core classes generated code relies on.
@@ -107,7 +108,7 @@ impl Options {
         .map(|m| m.split("::").map(str::to_string).collect())
         .unwrap_or_else(|| vec![default_module(words)]);
         let version = read("version", &is_version, "a gem version such as 1.2.3")
-            .unwrap_or_else(|| "0.1.0".to_string());
+            .unwrap_or_else(|| tungsten_config::option_fields::PACKAGE_VERSION.to_string());
         let runtime = read(
             "runtime",
             &is_requirement,

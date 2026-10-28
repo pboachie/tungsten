@@ -6,6 +6,7 @@ use tungsten_emit::{CommentStyle, header};
 
 use crate::Ctx;
 use crate::kotlin::lit;
+use crate::options::KOTLINX_COROUTINES;
 
 /// The Kotlin Gradle plugin the build script applies (the compiler version
 /// the SDKs are checked with).
@@ -55,12 +56,31 @@ impl Ctx<'_> {
                 o.runtime
             ));
         }
+        if o.coroutines {
+            if o.coroutines_runtime_path.is_none() {
+                s.push_str(&format!(
+                    "    implementation(\"io.github.pboachie.tungsten:tungsten-runtime-kotlin-coroutines:{}\")\n",
+                    o.runtime
+                ));
+            } else {
+                s.push_str(&format!(
+                    "    implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-core:{KOTLINX_COROUTINES}\")\n"
+                ));
+            }
+        }
         s.push_str("}\n");
-        if o.runtime_path.is_some() || o.java_runtime_path.is_some() {
+        let local_coroutines = o.coroutines && o.coroutines_runtime_path.is_some();
+        if o.runtime_path.is_some() || o.java_runtime_path.is_some() || local_coroutines {
             // A local build compiles the runtimes' sources into the SDK, so it
             // needs no installed runtime.
             s.push_str("\nsourceSets {\n    main {\n");
             if let Some(path) = &o.runtime_path {
+                s.push_str(&format!(
+                    "        kotlin.srcDir({})\n",
+                    lit(&format!("{}/src/main/kotlin", path.trim_end_matches('/')))
+                ));
+            }
+            if let Some(path) = o.coroutines_runtime_path.as_ref().filter(|_| o.coroutines) {
                 s.push_str(&format!(
                     "        kotlin.srcDir({})\n",
                     lit(&format!("{}/src/main/kotlin", path.trim_end_matches('/')))
@@ -119,13 +139,29 @@ impl Ctx<'_> {
             "val client = {client}(\n    ClientOptions.builder()\n"
         ));
         if let Some(scheme) = self.ir.auth.first() {
-            s.push_str(&format!(
-                "        .auth(\"{}\", AuthCredential.secret(System.getenv(\"API_TOKEN\")))\n",
-                scheme.name()
-            ));
+            if scheme.authorization_code().is_some() {
+                s.push_str(&format!(
+                    "        .auth({}, AuthCredential.parts(mapOf(\n\
+                     \x20               \"flow\" to \"authorizationCode\",\n\
+                     \x20               \"client_id\" to requireNotNull(System.getenv(\"OAUTH_CLIENT_ID\")),\n\
+                     \x20               \"redirect_uri\" to requireNotNull(System.getenv(\"OAUTH_REDIRECT_URI\")),\n\
+                     \x20       )))\n",
+                    lit(scheme.name())
+                ));
+            } else {
+                s.push_str(&format!(
+                    "        .auth({}, AuthCredential.secret(System.getenv(\"API_TOKEN\")))\n",
+                    lit(scheme.name())
+                ));
+            }
         }
         s.push_str("        .build(),\n)\n");
-        if let Some((accessor, member)) = self.first_call() {
+        let browser_auth = self
+            .ir
+            .auth
+            .first()
+            .is_some_and(|scheme| scheme.authorization_code().is_some());
+        if let Some((accessor, member)) = self.first_call().filter(|_| !browser_auth) {
             s.push_str(&format!("client.{accessor}.{member}()\n"));
             s.push_str("    .onError { System.err.println(it.toJson()) } // the error envelope\n");
             s.push_str(
@@ -133,11 +169,42 @@ impl Ctx<'_> {
             );
         }
         s.push_str("```\n\n");
+        if browser_auth {
+            s.push_str("Set `OAUTH_CLIENT_ID` and `OAUTH_REDIRECT_URI` to your registered application's client ID and exact redirect URI before constructing the client. Public clients omit `client_secret`; confidential clients supply it through application-owned secure configuration. Complete the managed authorization below before calling authenticated operations.\n\n");
+        }
+        if let Some(scheme) = self
+            .ir
+            .auth
+            .iter()
+            .find(|s| s.authorization_code().is_some())
+        {
+            s.push_str(&format!(
+                "## Managed OAuth authorization\n\n\
+                 Configure `{}` with `AuthCredential.parts` containing `flow: \"authorizationCode\"`, `client_id` and `redirect_uri`. Qualify the provider's S256 support and issuer response before enabling them. Supply an unpredictable owning listener/session binding, the qualified issuer URL, and the full callback received by that listener.\n\n\
+                 ```kotlin\n\
+                 val flow = client.oauth({})\n\
+                 val started = flow.authorizationUrl(OAuthFlow.AuthorizationParams.builder()\n\
+                 \x20       .sessionBinding(sessionBinding).s256Supported(true)\n\
+                 \x20       .issuerDefense(OAuthFlow.IssuerDefense.issuerResponse(issuer))\n\
+                 \x20       .build()).getOrThrow()\n\
+                 // Open started.url() in the browser; retain its handle with this listener.\n\
+                 val completed = flow.exchangeCode(OAuthFlow.ExchangeParams(\n\
+                 \x20       started.attemptHandle(), callbackUrl, sessionBinding))\n\
+                 ```\n\n\
+                 Check the exchange result before authenticated calls. Accepted callbacks are consumed once; invalid, canceled, expired or logged-out attempts cannot exchange again. Use `cancelAuthorization(handle, sessionBinding)` or `logout()` for local cleanup. `TokenStore.Memory` is the per-client default; custom managed stores require the atomic `TokenStore.Fenced` contract. Shared persistent stores and real providers/listeners need separate qualification. Handles, callbacks, bindings and tokens must stay out of logs.\n\n",
+                scheme.name(),
+                lit(scheme.name())
+            ));
+        }
         s.push_str("Every call returns the runtime's `Result`: `Result.Ok` with the typed value and the response metadata, or `Result.Err` with the error envelope (`Diagnostic`: category, remediation, retryable, ...). Nothing throws for API or transport failures; `getOrThrow()`, `fold` and `onError` are the Kotlin layer's extensions.\n\n");
         s.push_str("- Request classes are data classes with named, defaulted parameters: members that are null on the wire are `Patch<T>` (`Patch.Unset`, `Patch.Null`, `Patch.of(value)`), every other member is `T?`.\n");
         s.push_str("- Destructive and irreversible operations need `CallOptions.builder().confirm(...)`: a token from the operation's `preview...` function, or `Confirm.YES` for destructive ones.\n");
         s.push_str("- Mutations with a caller-owned idempotency key take `idempotencyKey(...)`; reuse it on every retry.\n");
+        s.push_str("- `deadline(...)` on `CallOptions.builder()` or `ClientOptions.builder()` (a `java.time.Duration`, or a `kotlin.time.Duration` with `import io.github.pboachie.tungsten.runtime.kotlin.deadline`) bounds one call (a whole pagination, poll or macro) across authentication, retries and verification; expiry returns code `DEADLINE_EXCEEDED`, and a mutation already sent `OUTCOME_UNKNOWN`. `timeout(...)` stays per attempt.\n");
         s.push_str("- Paginated operations have a `...Pages` function (a `Sequence` of page results, fetched as it advances; `itemsOrThrow()` flattens it into the items), streaming ones a `...Stream` function (an `EventStream`: iterate it or call `events()`, or use `on`, `collect`, `reduce`, `first`; `cancel` and `close`, or `use { }`).\n");
+        if o.coroutines {
+            s.push_str("- Coroutines (opt-in `coroutines` option, on for this SDK): next to each blocking function there is a `suspend` variant named `<function>Suspend` that returns the same `Result`, runs on `Dispatchers.IO` and, when its coroutine is cancelled (`withTimeout`, a cancelled scope), cancels the request in flight and ends with a `CancellationException`. Pages and streams also come as cold `Flow`s, `<function>Flow` (`listPagesFlow`, `watchStreamFlow`): pull based, each collection starts afresh, an error is the last element, `maxResponseBytes` and pagination cycle detection still apply to every page, and `.buffer(n)` bounds any prefetch. `Flow<Result<Page<T>>>.itemsOrThrow()` and `Flow<Result<StreamEvent<T>>>.valuesOrThrow()` (package `io.github.pboachie.tungsten.runtime.kotlin.coroutines`) flatten them. The blocking functions are unchanged. `dispatch()`, macros and the OAuth helpers stay blocking.\n");
+        }
         s.push_str(&format!(
             "- `client.dispatch()` runs operations by id with JSON arguments; `{}.Ops` holds the operation descriptors.\n\n",
             o.package

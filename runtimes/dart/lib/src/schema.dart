@@ -14,15 +14,38 @@ final class Issue {
   final String message;
 }
 
+/// A `pattern` the runtime could not check, so the value was accepted
+/// without it (see [Schema.validate]).
+final class UncheckedPattern {
+  /// A pattern that was not checked.
+  const UncheckedPattern(this.path, this.pattern, this.reason);
+
+  /// Member names (strings) and array indexes (ints) from the root.
+  final List<Object> path;
+
+  /// The pattern source.
+  final String pattern;
+
+  /// Why it was not checked, in words.
+  final String reason;
+}
+
 /// The validator of the runtime schema form of the SDK descriptor document:
 /// arguments before any network call, success bodies, page items and events
 /// after.
 ///
 /// Issues come structure first, then constraint violations, then unknown
-/// members. Types are strict (no coercion); string lengths count UTF-16
-/// code units. `pattern` is an ECMAScript expression run by Dart's
-/// `RegExp`, which follows ECMAScript (without the `u` flag); a pattern it
-/// cannot compile is not checked.
+/// members. Types are strict (no coercion); string lengths count Unicode
+/// code points, so an emoji is one character, not two UTF-16 code units.
+///
+/// `pattern` is an ECMAScript expression, searched anywhere in the string,
+/// run by Dart's `RegExp` with Unicode semantics (the `u` flag): `\p{...}`,
+/// `\u{...}` and astral-plane characters match as whole code points. A
+/// pattern the `u` flag rejects only for its legacy syntax (an identity
+/// escape such as `\_`) is run without the flag. A pattern neither mode can
+/// compile accepts the value, as in the other runtimes, but never silently:
+/// the caller of [validate] is told through its `onUnchecked` observer, and
+/// the client reports a `PATTERN_UNCHECKED` diagnostic.
 final class Schema {
   /// A validator of [schema] (a map of the runtime schema form) whose `ref`s
   /// resolve in [defs].
@@ -61,9 +84,15 @@ final class Schema {
 
   static final Map<String, RegExp?> _patterns = {};
 
-  /// The compiled pattern of an ECMAScript source, or null when Dart cannot
-  /// compile it.
+  /// The compiled pattern of an ECMAScript source, with Unicode semantics
+  /// when it compiles with them, else as legacy syntax; null when Dart cannot
+  /// compile it either way.
   static RegExp? pattern(String source) => _patterns.putIfAbsent(source, () {
+        try {
+          return RegExp(source, unicode: true);
+        } on FormatException {
+          // Fall through to the legacy syntax.
+        }
         try {
           return RegExp(source);
         } on FormatException {
@@ -71,8 +100,34 @@ final class Schema {
         }
       });
 
+  /// The length of a string in Unicode code points: a surrogate pair counts
+  /// once.
+  static int codePointCount(String text) {
+    var n = text.length;
+    for (var i = 0; i + 1 < text.length; i++) {
+      final unit = text.codeUnitAt(i);
+      if (unit >= 0xD800 && unit <= 0xDBFF) {
+        final next = text.codeUnitAt(i + 1);
+        if (next >= 0xDC00 && next <= 0xDFFF) {
+          n--;
+          i++;
+        }
+      }
+    }
+    return n;
+  }
+
   /// The issues of a value, none when it is valid.
-  List<Issue> validate(Object? value) => _Run(defs).run(schema, value);
+  ///
+  /// A `pattern` that cannot be compiled adds no issue. When [onUnchecked] is
+  /// given it receives each such pattern with its path (the value is never
+  /// passed), including patterns in a union's first accepting variant;
+  /// without it the pattern is skipped silently.
+  List<Issue> validate(
+    Object? value, {
+    void Function(UncheckedPattern note)? onUnchecked,
+  }) =>
+      _Run(defs, onUnchecked).run(schema, value);
 
   /// Whether the value is valid.
   bool accepts(Object? value) => validate(value).isEmpty;
@@ -97,9 +152,10 @@ final class Schema {
 }
 
 final class _Run {
-  _Run(this.defs);
+  _Run(this.defs, [this.onUnchecked]);
 
   final Map<String, Object?> defs;
+  final void Function(UncheckedPattern note)? onUnchecked;
   final List<Issue> _structure = [];
   final List<Issue> _constraints = [];
   final List<Issue> _unknown = [];
@@ -109,8 +165,22 @@ final class _Run {
     return [..._structure, ..._constraints, ..._unknown];
   }
 
-  bool _admits(Object? schema, Object? value) =>
-      _Run(defs).run(_asSchema(schema), value).isEmpty;
+  bool _admits(Object? schema, Object? value, List<Object> path, int depth) {
+    final notes = <UncheckedPattern>[];
+    final probe = _Run(defs, onUnchecked == null ? null : notes.add);
+    probe._check(_asSchema(schema), value, path, depth);
+    if (probe._structure.isNotEmpty ||
+        probe._constraints.isNotEmpty ||
+        probe._unknown.isNotEmpty) {
+      return false;
+    }
+    // Only the selected variant's unchecked patterns affect this validation.
+    // Keep their original paths rather than restarting at the union's root.
+    for (final note in notes) {
+      onUnchecked?.call(note);
+    }
+    return true;
+  }
 
   static Map<String, Object?>? _asSchema(Object? s) =>
       s is Map<String, Object?> ? s : null;
@@ -342,7 +412,7 @@ final class _Run {
       }
       return _bad(_at(path, tag), 'must be one of ${Json.text(tags)}');
     }
-    if (variants.any((v) => _admits(v, value))) return;
+    if (variants.any((v) => _admits(v, value, path, depth + 1))) return;
     _bad(path, 'does not match any variant');
   }
 
@@ -357,7 +427,7 @@ final class _Run {
 
   void _stringLimits(
       Map<String, Object?> schema, String text, List<Object> path) {
-    final n = text.length;
+    final n = Schema.codePointCount(text);
     final min = schema['min_length'];
     final max = schema['max_length'];
     if (min is num && n < min) {
@@ -369,7 +439,15 @@ final class _Run {
     final source = schema['pattern'];
     if (source is String) {
       final re = Schema.pattern(source);
-      if (re != null && !re.hasMatch(text)) {
+      if (re == null) {
+        onUnchecked?.call(
+          UncheckedPattern(
+            path,
+            source,
+            'Dart\'s RegExp cannot compile it',
+          ),
+        );
+      } else if (!re.hasMatch(text)) {
         _limit(path, 'must match the pattern /$source/');
       }
     }

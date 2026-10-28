@@ -20,10 +20,18 @@
 //! [`parse_yaml`] and [`deserialize_manifest`] report `TG0601` and
 //! `TG0602` the same way for any manifest type.
 
+pub mod capabilities;
+pub mod execution_policy;
+pub mod inspection;
+pub mod option_fields;
 pub mod pointer;
+pub mod profiles;
 mod source;
 mod strict;
+pub mod target_options;
+pub mod transport;
 mod validate;
+pub mod workspace;
 mod yaml;
 
 use std::fmt;
@@ -75,12 +83,26 @@ pub struct TungstenConfig {
     /// targets, for example in CI over a manifest you do not trust.
     #[serde(default)]
     pub targets: IndexMap<String, serde_json::Value>,
+    /// Ordered local defaults with explicitly selected include roots.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 64))]
+    pub profiles: Vec<profiles::ProfileSelection>,
+    /// Proxy, private CA, mTLS and account references; names only, never the
+    /// material. Explicit fields here win over profile defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<transport::TransportReferences>")]
+    pub transport: Option<serde_json::Value>,
     #[serde(default)]
     pub output: Option<serde_json::Value>,
     /// Path of the agent manifest, relative to this file. When absent,
     /// `agent.yml` next to this file is used if it exists.
     #[serde(default)]
     pub agent: Option<String>,
+    /// Require a current `tungsten.lock.json` for `generate` and `check`, as
+    /// `--locked` does: inputs are read offline and generation is refused when
+    /// the lock is missing, stale or corrupt.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub locked: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -106,7 +128,7 @@ pub struct InputConfig {
     /// Path relative to the manifest's directory.
     pub spec: String,
     /// Original remote source of a locally converted import. Its SHA256 pin is
-    /// verified before compilation; changed sources require explicit re-import.
+    /// verified before compilation; changed sources are refreshed with `tungsten refresh-import`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,
     /// SHA256 of the remote bytes used for the reviewed local conversion.
@@ -405,8 +427,11 @@ impl TungstenConfig {
             pagination: IndexMap::new(),
             types: TypesConfig::default(),
             targets: IndexMap::new(),
+            profiles: vec![],
+            transport: None,
             output: None,
             agent: None,
+            locked: false,
         }
     }
 }

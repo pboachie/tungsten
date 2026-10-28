@@ -30,7 +30,7 @@ responsible for authorization and server-side idempotency.
 Select `FileIdempotencyStore` through the client's idempotency-store option to
 reuse keys after a restart and coordinate automatic key allocation across
 processes. The version-1 JSON file and `<path>.lock` owner lease interoperate
-with the TypeScript, Python, Go, Rust, Java, C# and Ruby stores.
+with the TypeScript, Python, Go, Rust, Java, C#, Ruby and Dart stores.
 
 ```csharp
 var options = new ClientOptions
@@ -55,19 +55,257 @@ token immediately before commit and removes only its own lease. Use a filesystem
 that supports exclusive creation and atomic rename; this is not a distributed
 transaction service. Losing this file can cause a new key for a previous intent.
 
+## Credential transport
+
+Credentials require HTTPS by default, including OAuth client-credentials, code
+exchange and refresh endpoints. Non-loopback HTTP returns `AUTH_FAILED` before
+sending credentials. Migrate authenticated HTTP services to HTTPS, or explicitly
+opt in with `new ClientOptions { AllowInsecureHttp = true }` for intentional insecure transport.
+This permits cleartext credentials; enable it only for a trusted environment.
+
+The local-development exception covers `localhost` (also with a trailing dot),
+literal IPv4 `127/8`, and IPv6 `::1`. Subdomains, unspecified addresses and
+IPv4-mapped IPv6 addresses require the explicit override. DNS resolution does not
+grant an exception. Anonymous HTTP requests remain supported.
+
+## Browser OAuth authorization
+
+In unreleased 0.2.0, `OAuthFlow.AuthorizationUrl` synchronously returns a
+`Result<AuthorizationAttempt>` with a URL, opaque handle and lifetime. Supply
+`AuthorizationUrlParams.SessionBinding` from the owning authenticated session or
+callback listener, explicitly qualify provider S256 support, and choose
+`IssuerDefense.IssuerResponse(issuer)` or
+`IssuerDefense.DistinctRedirect(qualification)`. The issuer-response strategy
+requires the exact decoded `iss` on every callback, including denial. The
+distinct-redirect strategy requires an application qualification that its redirect
+isolates this issuer; missing `iss` never selects a fallback. Provider/listener
+qualification belongs to the application.
+
+```csharp
+var flow = client.OAuth("user");
+var started = flow.AuthorizationUrl(new AuthorizationUrlParams
+{
+    SessionBinding = sessionBinding,
+    S256Supported = true,
+    IssuerDefense = IssuerDefense.IssuerResponse(qualifiedIssuer),
+});
+if (started is Result<AuthorizationAttempt>.Ok ok)
+{
+    // Open ok.Value.Url; retain its handle with this listener/session.
+    // Capture the complete callback URL from that listener.
+    var completed = await flow.ExchangeCodeAsync(new ExchangeCodeParams
+    {
+        AttemptHandle = ok.Value.AttemptHandle,
+        CallbackUrl = callbackUrl,
+        SessionBinding = sessionBinding,
+    }, cancellationToken);
+    // Handle completed as a runtime Result; never blindly repeat a consumed code.
+}
+```
+
+The runtime generates private state/S256 PKCE and captures immutable client,
+issuer/endpoints, redirect, scopes/resource/audience and account context per
+attempt. Completion validates the full callback and atomically claims one token
+exchange. Invalid unrelated callbacks do not consume valid attempts. Denial or an
+exchange failure consumes its attempt. Begin a new attempt after ambiguous
+exchange outcomes. `Pkce()` is a low-level utility; the managed default creates
+its own pair. Legacy integrations must explicitly select
+`LowLevelAuthorizationUrl` / `LowLevelExchangeCodeAsync` and their separately
+named parameter types; they own state/PKCE, callback and lifecycle protections.
+
+Each client admits at most 32 pending/exchanging attempts, including begin work
+until it settles. Ten-minute expiry uses monotonic elapsed time and an owned
+timer. Captured input strings are limited to 32 KiB UTF-8, scopes/extras to 64
+entries each, and raw/decoded callbacks to 16 KiB and 64 parameters. Duplicate or
+malformed callback fields and protected endpoint/extra fields refuse.
+`CancelAuthorization` and cancellation tokens invalidate owned attempts;
+claimed work keeps its admission until actual transport/store settlement.
+Timers and cancellation registrations are removed on cleanup. Removing references
+does not promise physical zeroization. Do not log URLs, callbacks, handles,
+session bindings, verifiers or tokens.
+
+`Logout` invalidates attempts before local store work; it does not revoke tokens
+remotely. Reads and late token results are fenced by logout generation. A separate
+credential-mutation epoch prevents old refresh success/rejection from replacing
+or deleting a newer login, including when token strings repeat. Concurrent
+completed logins select credentials at successful store commits. Refresh tasks
+retain one of 32 owned slots until settlement even if every waiter cancels;
+custom transports that ignore cancellation can delay settlement. Code/refresh
+responses settling after the configured transport timeout are refused before
+credentials change, including credential-rejecting responses. This monotonic
+response deadline does not force synchronous custom-store work to finish.
+
+Managed begin and default refresh require `IFencedTokenStore`. Its predicates
+must run exactly once against the current token at the final serialized
+mutation, without speculation, retry or a gap before write/removal. Predicates
+advance managed epochs. Return true only for a committed mutation and retain the
+prior token when a write fails; a predicate followed by failed commit can
+conservatively invalidate an old refresh. Runtime token-store calls occur outside
+the attempt-state lock. `MemoryTokenStore` supplies this per-client contract;
+shared multi-account persistence needs separate partitioning and qualification.
+External/direct and low-level writes bypass managed epochs. Coordinate external
+credential replacement through logout and a new session, and avoid concurrent
+mutation of application-owned descriptor/credential collections.
+
+Code/refresh responses default to 64 KiB. Set the separate
+`ClientOptions.MaxOAuthTokenResponseBytes` to a positive safe integer for larger
+providers; null inherits the default. This bounds accepted response bytes, not
+decoder allocations, total invocation memory or client-credentials responses.
+The runtime and delegated F# consumers require .NET 10; changing helper APIs does
+not lower their target or establish installed-package/provider acceptance.
+
+## Opening authorization URLs safely
+
+OAuth authorization helpers return URL data; they do not open a browser. Treat
+provider endpoints and returned URLs as untrusted input. Apply your application's
+URL policy and use a browser or native URL API that treats the complete target as
+literal data. Never interpolate the URL into PowerShell, CMD, POSIX shell or other
+command source, and do not pass it to an opener that does so internally.
+
+Scheme validation alone does not prevent command injection: an ordinary HTTPS
+URL can contain shell expansion characters. Managed OAuth endpoint checks are
+protocol validation, not shell escaping. Explicit low-level compatibility helpers
+retain application-owned URL policy, including custom schemes; their results
+need the same safe integration boundary. Do not silently route a rejected URL or
+failed browser launch through a shell fallback.
+
+These boundaries do not qualify third-party openers, custom integrations or real
+provider/listener behavior. Qualify the application's complete launch path on
+each supported platform, including Windows and WSL.
+
 ## Limits
 
-Set `ClientOptions.MaxResponseBytes` to opt into an ordinary-response byte cap;
-a call option with the same name overrides it. The value must be a positive
-safe integer (at most 9007199254740991); unset keeps the existing unbounded
-behavior. Content-Length is checked before reading, and actual bytes are
-counted even without that header. Overflow closes the body and returns
-`UNEXPECTED_RESPONSE` with code `RESPONSE_TOO_LARGE` and `retryable: never`.
-A mutation may have taken effect: inspect API state before retrying. The cap
-does not limit a successful SSE stream; use its event and collection limits.
+Multipart bodies: a field whose OpenAPI `encoding` entry declares a
+`contentType` is sent with that media type (the first entry without
+wildcards); a file part's own media type wins. The entry's `headers` are not
+sent (the TypeScript, Python and Rust runtimes send those with a fixed
+value), and neither is positional or nested multipart encoding. Unreleased
+0.2.0 only.
+
+The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
+not run by the client: configure the scheme with an access token obtained
+through it.
+
+A tagged union with an OpenAPI 3.2 discriminator `defaultMapping` decodes an
+object whose tag is missing, not a string or claimed by no other variant as the
+default variant; its own field types then apply. Without `defaultMapping`
+such an object is refused. A value that is not an object is always refused.
+
+In unreleased 0.2.0, `Deadline` (on `ClientOptions` or `CallOptions`, a `TimeSpan`) sets a total
+deadline for one logical call, separate from the per-attempt `Timeout`. It is measured on a
+monotonic clock (`Stopwatch`) and covers authentication, idempotency-key reservation, every attempt
+(each one's `Timeout` is cut to the time left), retry waits, response bodies and verification; for
+`PagesAsync`, `PollAsync` and `RunMacroAsync` it covers the whole traversal, poll or macro, and
+nested work cannot restart it. No attempt starts after it expires: the call fails with `Code`
+`DEADLINE_EXCEEDED`, and a mutation that was already sent reports `OUTCOME_UNKNOWN`, never a blind
+replay. A retry wait or poll interval that would end after the deadline is not waited for. For
+`Stream` it bounds connecting and each reconnect, never an open stream (use `IdleTimeout`). A
+shared OAuth token refresh is not cancelled at the deadline, only no longer waited for, so other
+callers still get its result; it stays bounded by its own timeout. A custom `IIdempotencyStore`
+runs synchronously and is not interrupted, and a custom `HttpClient` handler that ignores
+cancellation can keep running after the deadline. The caller's `CancellationToken` is unchanged
+and still cancels at once. Default: no total deadline.
+
+In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
+Set `ClientOptions.MaxResponseBytes` to choose a finite client cap; the call option with the same
+native name overrides it. Omitted/null values inherit the default or client cap,
+not an unlimited mode. Values must be positive safe integers (at most
+9007199254740991), validated before authentication, storage and preview effects.
+This covers ordinary success/error bodies, server previews, each page and each
+verification read. A page cap does not bound collecting many pages.
+
+Content-Length can reject an oversized representation early; actual delivered
+bytes are counted even without it. HEAD/204/205/304 metadata alone does not
+consume the budget, but any body bytes a transport delivers are still counted.
+Overflow closes the owned body and returns `UNEXPECTED_RESPONSE`, code
+`RESPONSE_TOO_LARGE`, with `retryable: never`. A mutation may have taken effect:
+inspect API state before retrying. The cap is separate from OAuth token-response
+and successful SSE event/collection budgets.
+
+### Schema patterns
+
+A schema `pattern` is an ECMAScript (ECMA-262) expression, searched rather than anchored, as in the
+TypeScript runtime. .NET regular expressions differ, so the runtime rewrites the pattern before compiling it
+(`RegexOptions.ECMAScript` is not used: it rejects `\p{...}` and lookbehind, and still lets `$` match before
+a trailing newline). `\d`, `\w` and `\b` are ASCII, `\s` is the ECMAScript whitespace set, `$` matches only
+at the very end, `.` excludes `\n`, `\r`, `\u2028` and `\u2029`, and `\u{...}`, `\p{...}` (general
+categories, `ASCII`, `Any`), lookbehind and named groups work.
+
+A pattern is either checked with ECMAScript meaning or not checked at all; it is never approximated. Like the
+TypeScript runtime, a pattern is read in Unicode mode and only when ECMAScript itself rejects it there, as a
+pattern without the `u` flag. Every capture group is numbered in ECMAScript order, so back-references and
+`\k<name>` point at the right group even when named and unnamed groups are mixed, and a reference to a group
+that has not captured matches the empty string, as in ECMAScript.
+
+A pattern the runtime cannot check accepts the value, as the other runtimes do, but is not silent:
+`ClientOptions.OnDiagnostic` receives a diagnostic with code `PATTERN_UNCHECKED` (one per pattern and path
+and call, at most 16 per call), whose `failed_parameter` is the path (`args...` for a request,
+`response...`, `events[n]...` or a page item) and whose remediation names the pattern and the reason. The
+server still validates the value. The cases are:
+
+- the pattern is not valid ECMAScript, or .NET refuses the rewrite;
+- it uses a construct without a faithful .NET equivalent: Unicode properties other than general
+  categories, `ASCII` and `Any`; a code point above U+FFFF in a negated character class or at the end of a range that starts below it; a capture group
+  inside a lookbehind; a back-reference to a group inside a repeated group or a negative lookahead; a
+  quantified lookahead or the legacy octal and `\c` escapes of patterns without the `u` flag;
+- the value contains characters above U+FFFF and the pattern can tell a surrogate pair from two code units
+  (`\p{...}`, a class with a complemented escape such as `[\W\d]` or a range across the surrogates, or a
+  lone surrogate escape), because .NET matches UTF-16 code units; `.`, negated classes and astral literals
+  are matched as whole code points;
+- matching one value took longer than one second, or the matching of one validation (one request, response,
+  page item or event) has used its two-second budget, so a run of pathological values costs bounded time.
+
+`Schema.Validate` and `Schema.Accepts` called directly have no observer and stay silent. The one remaining
+difference in checked patterns is the Unicode version behind `\p{...}`: .NET's tables can differ from the
+JavaScript engine's for recently assigned characters.
+
+### String lengths
+
+`min_length` and `max_length` count Unicode code points, as JSON Schema defines: a surrogate pair is one
+character and a lone surrogate is one. Earlier versions counted UTF-16 code units.
+
+The default transport does not decompress encoded bodies; use identity encoding. Encoded delivery does not establish a decoded-content limit.
+The cap limits accepted body bytes; parsers, copies and HTTP decoders can allocate
+more. Custom transports must stream nonempty bodies and honor cancellation;
+their own buffering, decoding and settlement behavior need separate qualification.
 
 Applications configure and own the
 HTTP client and persistent credential storage.
+
+Streams: a server-sent event larger than `ClientOptions.MaxEventBytes` (1 MiB)
+fails the stream. `EventStream.CollectAsync` keeps at most `MaxCollectBytes` (4 MiB)
+of event JSON and runs at most `MaxCollectTime` (60 s); a dropped stream
+reconnects `MaxReconnects` times (3).
+
+### Platform and availability
+
+- Targets net10.0 only (`Tungsten.Runtime.csproj`). Requests use HTTP/1.1.
+- `ClientOptions.HttpClient` replaces the default client, which must not follow
+  redirects; proxy and handler configuration belong to that client.
+- The default idempotency store is process-local (`MemoryIdempotencyStore`);
+  `FileIdempotencyStore` (see Durable automatic keys) is the durable one.
+- `Tungsten.Runtime` 0.1.3 is published on NuGet. The unreleased 0.2.0 behavior
+  described here is available from source until a matching package is published.
+
+### Schema features and fallback types
+
+Since 0.2.0 an `allOf` that cannot be merged into one record is a sealed record
+with one typed property per member, an enum of mixed JSON types (booleans,
+fractional numbers, integers beyond 64 bits) is a readonly record struct of its
+known JSON values, and an operation whose success bodies differ by exact status
+returns a nested abstract record of its answers (read `Status` to tell them
+apart).
+
+Still the runtime's `JsonNode`, which the runtime validates against the schema:
+
+- an `allOf` without members (TG1021, a warning);
+- a success whose bodies differ and are not one JSON body (or none) per exact
+  status: a range or `default` status, or a text or binary body among them.
+
+A discriminated union with a variant that has no tag value tries its variants in
+order (TG1025). OpenID Connect is sent as a bearer token; discovery is not
+supported (TG1023). A macro outside the canonical form is left out (TG1022). The
+C# target emits no CLI or MCP server; the `mcp` target is separate.
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect

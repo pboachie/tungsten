@@ -26,12 +26,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
+import contextvars
 import dataclasses
 import math
 import re
 import sys
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from types import NoneType, UnionType
 from typing import (
     Annotated,
@@ -52,6 +54,7 @@ else:
 
 from typing_extensions import TypeAliasType as BackportTypeAliasType
 
+from ._upload import UploadSource
 from .sentinels import UNSET
 from .types import Invalid, Issue, Valid
 
@@ -110,6 +113,7 @@ class TagReader:
 
     wire: str
     aliases: tuple[tuple[str, str], ...] = ()
+    default: str | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -137,12 +141,21 @@ class _AllOf:
     members: Callable[[], Sequence[Any]]
 
 
-def tag(wire: str, aliases: Mapping[str, str] | None = None) -> TagReader:
+def tag(
+    wire: str,
+    aliases: Mapping[str, str] | None = None,
+    default: str | None = None,
+    known: Sequence[str] = (),
+) -> TagReader:
     """The discriminator of a tagged union: the value of the ``wire`` property
     of a mapping, or of the field with that wire name of a model. ``aliases``
     maps the other tag values of the discriminator mapping to their variant's
-    tag (``{"puppy": "dog"}`` when both select ``Dog``)."""
-    return TagReader(wire, tuple((aliases or {}).items()))
+    tag (``{"puppy": "dog"}`` when both select ``Dog``). With ``default`` (an
+    OpenAPI 3.2 ``defaultMapping``), a missing tag or one that selects no
+    variant selects the variant tagged ``default``; ``known`` lists the
+    variant tags (the union's own members are used here)."""
+    del known
+    return TagReader(wire, tuple((aliases or {}).items()), default)
 
 
 def pattern(source: str) -> _Pattern:
@@ -462,7 +475,7 @@ class _BytesNode(_Node):
 
 class _BinaryNode(_Node):
     def check(self, value: object, path: Path, mode: Mode, issues: list[Issue]) -> Any:
-        if _is_file(value) or isinstance(value, bytes):
+        if _is_file(value) or isinstance(value, bytes | UploadSource):
             return value
         return _fail(issues, path, "Input should be a valid bytes", "bytes_type")
 
@@ -541,8 +554,13 @@ class _UnionNode(_Node):
         first: list[Issue] | None = None
         for member in self.members:
             found: list[Issue] = []
-            result = member.check(value, path, mode, found)
+            notes = _NOTES.get()
+            speculative: list[PatternNote] = []
+            with collect_pattern_notes(speculative) if notes is not None else contextlib.nullcontext():
+                result = member.check(value, path, mode, found)
             if result is not _BAD:
+                if notes is not None:
+                    notes.extend(speculative)
                 return result
             first = first if first is not None else found
             if isinstance(member, _NoneNode) or (
@@ -582,6 +600,12 @@ class _TaggedNode(_Node):
         found = self._read(value)
         if isinstance(found, str):
             found = dict(self.reader.aliases).get(found, found)
+        is_object = isinstance(value, Mapping) or (
+            dataclasses.is_dataclass(value) and not isinstance(value, type)
+        )
+        unmapped = not isinstance(found, str) or found not in self.members
+        if self.reader.default is not None and is_object and unmapped:
+            found = self.reader.default
         if not isinstance(found, str):
             if not isinstance(value, Mapping) and not (
                 dataclasses.is_dataclass(value) and not isinstance(value, type)
@@ -607,7 +631,7 @@ class _TaggedNode(_Node):
                 f"Input tag '{found}' found using '{self.reader.wire}' does not match any of the expected tags: {expected}",
                 "union_tag_invalid",
             )
-        return member.check(value, path, mode, issues)
+        return member.check(cast("object", value), path, mode, issues)
 
 
 class _AliasNode(_Node):
@@ -673,16 +697,77 @@ _FORMATS: dict[str, re.Pattern[str]] = {
 MAX_PATTERN_SUBJECT = 64 * 1024
 
 
-def _compile_pattern(source: str) -> re.Pattern[str] | None:
+@dataclasses.dataclass(frozen=True, slots=True)
+class PatternNote:
+    """A schema ``pattern`` that was not checked, so its value was accepted:
+    where (``path``), which pattern, and why. Never carries the value."""
+
+    path: tuple[str | int, ...]
+    pattern: str
+    reason: str
+
+
+_NOTES: contextvars.ContextVar[list[PatternNote] | None] = contextvars.ContextVar(
+    "tungsten_pattern_notes", default=None
+)
+
+
+@contextlib.contextmanager
+def collect_pattern_notes(sink: list[PatternNote]) -> Generator[None]:
+    """While active, validation appends a ``PatternNote`` to ``sink`` for each
+    pattern it could not check (the runtime reports them as ``PATTERN_UNCHECKED``
+    diagnostics). Without it a direct ``validate`` call stays silent."""
+    token = _NOTES.set(sink)
     try:
-        return re.compile(source)
-    except (re.error, OverflowError, RecursionError):
-        return None
+        yield
+    finally:
+        _NOTES.reset(token)
+
+
+def _note(path: Path, source: str, reason: str) -> bool:
+    sink = _NOTES.get()
+    if sink is None:
+        return False
+    sink.append(PatternNote(tuple(path), source, reason))
+    return True
+
+
+_BRACED_ESCAPE = re.compile(r"\\(?:(\\)|u\{([0-9A-Fa-f]{1,6})\}|.)", re.DOTALL)
+
+
+def _code_point_escapes(source: str) -> str:
+    """Rewrite the ECMAScript ``u``-flag escape ``\\u{XXXX}`` (one to six hex
+    digits, at most 10FFFF) to the ``\\UXXXXXXXX`` that ``re`` understands, in
+    and out of classes. Any other escape, an escaped backslash included, is
+    kept; a malformed or out-of-range ``\\u{...}`` is left alone, so it fails to
+    compile and is reported as unchecked."""
+    if "\\u{" not in source:
+        return source
+
+    def rewrite(match: re.Match[str]) -> str:
+        digits = match.group(2)
+        if digits is None or int(digits, 16) > 0x10FFFF:
+            return match.group(0)
+        return f"\\U{int(digits, 16):08x}"
+
+    return _BRACED_ESCAPE.sub(rewrite, source)
+
+
+def _compile_pattern(source: str) -> tuple[re.Pattern[str] | None, str]:
+    """The compiled pattern, or why Python's ``re`` cannot compile it."""
+    try:
+        return re.compile(_code_point_escapes(source)), ""
+    except re.error as error:
+        return None, f"Python's re cannot compile it ({error.msg})"
+    except (OverflowError, RecursionError):
+        return None, "Python's re cannot compile it (too large or too deeply nested)"
 
 
 def _limit_issue(limits: Limits, value: object) -> tuple[str, str] | None:
     """The first bound ``value`` breaks: (message, code)."""
     if isinstance(value, str | list):
+        # A string counts code points (JSON Schema): Python's ``str`` indexes
+        # them, a lone surrogate included.
         size = len(cast("str | list[object]", value))
         noun = "characters" if isinstance(value, str) else "items"
         kind = "string" if isinstance(value, str) else "list"
@@ -728,7 +813,7 @@ class _CheckedNode(_Node):
         self.inner = inner
         self.exact = [m for m in meta if isinstance(m, _Exact)]
         self.limits = [m for m in meta if isinstance(m, Limits)]
-        self.patterns = [(m.source, _compile_pattern(m.source)) for m in meta if isinstance(m, _Pattern)]
+        self.patterns = [(m.source, *_compile_pattern(m.source)) for m in meta if isinstance(m, _Pattern)]
         self.formats = [m for m in meta if isinstance(m, _Format)]
         self.one_of = [m for m in meta if isinstance(m, _OneOf)]
 
@@ -743,20 +828,33 @@ class _CheckedNode(_Node):
             return _BAD
         # Bounds apply to the value read (an integral float is an integer).
         subject = result
+        if isinstance(subject, str):
+            # Reported even when a length bound fails first: the pattern is
+            # not checked either way.
+            for source, compiled, why in self.patterns:
+                if compiled is None:
+                    _note(path, source, why)
         for limits in self.limits:
             problem = _limit_issue(limits, subject)
             if problem is not None:
                 return _fail(issues, path, *problem)
         if isinstance(subject, str):
-            for source, compiled in self.patterns:
-                if compiled is not None and len(subject) > MAX_PATTERN_SUBJECT:
-                    warnings.warn(
-                        f"String longer than {MAX_PATTERN_SUBJECT} characters: pattern /{source[:80]}/ not checked",
-                        RuntimeWarning,
-                        stacklevel=2,
-                    )
+            for source, compiled, _why in self.patterns:
+                if compiled is None:
                     continue
-                if compiled is not None and compiled.search(subject) is None:
+                if len(subject) > MAX_PATTERN_SUBJECT:
+                    if not _note(
+                        path,
+                        source,
+                        f"the string is longer than {MAX_PATTERN_SUBJECT} characters (the match limit)",
+                    ):
+                        warnings.warn(
+                            f"String longer than {MAX_PATTERN_SUBJECT} characters: pattern /{source[:80]}/ not checked",
+                            RuntimeWarning,
+                            stacklevel=2,
+                        )
+                    continue
+                if compiled.search(subject) is None:
                     return _fail(
                         issues, path, f"String should match pattern /{source}/", "string_pattern_mismatch"
                     )

@@ -48,6 +48,11 @@ func describe() any {
 		"protocol": protocol,
 		"name":     "go",
 		"version":  emitterVersion,
+		// The generated descriptors carry each operation's import policy
+		// (tungsten.ImportPolicy, so they build only against a runtime that
+		// has it) and the runtime refuses a reviewed imported operation whose
+		// target origin is outside its saved review scope.
+		"import_policy": true,
 		"options": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
