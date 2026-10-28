@@ -7,7 +7,7 @@
 
   <groupId>io.github.pboachie.tungsten</groupId>
   <artifactId>tungsten-runtime</artifactId>
-  <version>0.1.5</version>
+  <version>0.1.6</version>
   <packaging>jar</packaging>
 
   <name>tungsten runtime for Java</name>
@@ -25,7 +25,7 @@
     <url>https://github.com/pboachie/tungsten</url>
     <connection>scm:git:https://github.com/pboachie/tungsten.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/pboachie/tungsten.git</developerConnection>
-    <tag>v0.1.5</tag>
+    <tag>v0.1.6</tag>
   </scm>
 
   <developers>

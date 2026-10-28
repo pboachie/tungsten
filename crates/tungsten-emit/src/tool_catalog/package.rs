@@ -116,7 +116,7 @@ impl Options {
         };
         let runtime = match runtime_path {
             Some(p) => format!("file:{p}"),
-            None => runtime_range.unwrap_or_else(|| "^0.1.5".to_string()),
+            None => runtime_range.unwrap_or_else(|| "^0.1.6".to_string()),
         };
         (
             Options {

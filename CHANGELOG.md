@@ -9,6 +9,28 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-28
+
+### Fixed
+
+- Correct the release packaging defects that blocked the v0.1.5 tag: the
+  Kotlin and Kotlin-coroutines Maven manifests still declared the stale
+  `v0.1.3` SCM tag (the release archive validator requires `v` + the
+  workspace version), and the Rust CLI kit inherited `tokio` from the
+  runtime workspace with a feature override the crates.io packager rejects
+  (the `net` and `io-util` features now come from the workspace entry
+  itself).
+- The v0.1.5 tag is left in place, immutable and unpublished: its release
+  run failed after the coordinator branch gate and its content cannot pass
+  the registry validators. Everything 0.1.5 was meant to ship rides in
+  this release unchanged.
+
+### Changed
+
+- Coordinated 0.1.6 version bump across the compiler, every runtime
+  manifest and identity header, generated-package runtime defaults and the
+  Go module default, carrying the complete qualified 0.1.5 content.
+
 ## [0.1.5] - 2026-10-28
 
 ### Security
@@ -833,8 +855,9 @@ runtime (`@elysra/tungsten-mcp`) and the installers ship together at 0.1.0.
 - The compiler warns when a `gates` entry in `agent.yml` matches no
   operation.
 
-[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.5...HEAD
-[0.1.5]: https://github.com/pboachie/tungsten/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/pboachie/tungsten/compare/v0.1.5...v0.1.6
+[0.1.5]: https://github.com/pboachie/tungsten/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/pboachie/tungsten/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/pboachie/tungsten/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/pboachie/tungsten/compare/v0.1.1...v0.1.2
