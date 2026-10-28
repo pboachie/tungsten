@@ -35,7 +35,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="FSharp.Core" Version="10.1.401" />
+    <PackageReference Include="FSharp.Core" Version="10.1.501" />
   </ItemGroup>
 
   <!-- Development and CI build the F# layer against the C# runtime source. A release pack
