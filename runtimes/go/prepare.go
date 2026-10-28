@@ -201,7 +201,8 @@ func (c *ClientCore) validateArgs(op *OperationDescriptor, args *Object, placeho
 			fmt.Sprintf("Pass the request body as %s.", body.Arg))
 	}
 	if op.Request != nil {
-		issues, panicked := runValidator(op.Request, args)
+		issues, notes, panicked := runValidator(op.Request, args)
+		c.reportUnchecked(op.ID, "", ValidationFailed, notes, func(path []PathSegment) string { return argumentPath(op, path) }, nil)
 		if panicked {
 			return nil, newDiag(op.ID, UnexpectedResponse).retry(RetryNever).
 				remedy("The SDK failed while building or sending the request (the request validator panicked). This is a bug in the generated SDK or the runtime; report it. Nothing was sent.").err()
@@ -279,24 +280,67 @@ func (c *ClientCore) validateArgs(op *OperationDescriptor, args *Object, placeho
 	return args, nil
 }
 
-// runValidator runs a validator; panicked is true when it panicked.
-func runValidator(v Validator, value any) (issues []Issue, panicked bool) {
+// runValidator runs a validator; panicked is true when it panicked. notes
+// are the schema patterns it could not check.
+func runValidator(v Validator, value any) (issues []Issue, notes []patternNote, panicked bool) {
 	defer func() {
 		if recover() != nil {
-			issues, panicked = nil, true
+			issues, notes, panicked = nil, nil, true
 		}
 	}()
-	return v.Validate(value), false
+	if nv, ok := v.(noteValidator); ok {
+		issues, notes = nv.validateNotes(value)
+		return issues, notes, false
+	}
+	return v.Validate(value), nil, false
 }
 
 // judge runs a validator that only judges (responses, page items, events):
-// a panic is an issue at the root.
-func judge(v Validator, value any) []Issue {
-	issues, panicked := runValidator(v, value)
+// a panic is an issue at the root. The patterns it could not check are
+// reported once through OnDiagnostic, under root (for example "response");
+// seen, when not nil, deduplicates across several calls.
+func (c *ClientCore) judge(op, root string, v Validator, value any, seen map[string]bool) []Issue {
+	issues, notes, panicked := runValidator(v, value)
+	c.reportUnchecked(op, root, UnexpectedResponse, notes, nil, seen)
 	if panicked {
 		return []Issue{{Message: "the response schema failed (the validator panicked)"}}
 	}
 	return issues
+}
+
+// reportUnchecked emits PATTERN_UNCHECKED for each pattern the schema could
+// not check: the value was accepted without it. The diagnostic names the
+// path, the pattern and the reason, never the value. show renders a path
+// (default: root plus .key and [index] segments); seen deduplicates by path
+// and pattern across calls.
+func (c *ClientCore) reportUnchecked(op, root string, category Category, notes []patternNote, show func([]PathSegment) string, seen map[string]bool) {
+	if len(notes) == 0 || c.onDiagnostic == nil {
+		return
+	}
+	if seen == nil {
+		seen = map[string]bool{}
+	}
+	for _, n := range notes {
+		var param string
+		if show != nil {
+			param = show(n.Path)
+		} else {
+			param = root + formatIssuePath(n.Path)
+		}
+		key := param + "\n" + n.Pattern
+		if seen[key] {
+			continue
+		}
+		if len(seen) >= 16 {
+			break
+		}
+		seen[key] = true
+		code := "PATTERN_UNCHECKED"
+		d := newDiag(op, category).code(&code).retry(RetryNever).param(param).
+			expected("a value matching the pattern /" + n.Pattern + "/").
+			remedy(fmt.Sprintf("The pattern /%s/ at %s was not checked because %s; the value was accepted without it. The server still validates it.", n.Pattern, param, n.Reason)).build()
+		c.emit(d)
+	}
 }
 
 func (c *ClientCore) checkKey(op *OperationDescriptor, key string, hasKey bool, p purpose) *Error {
@@ -507,8 +551,29 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 		}
 	}
 	method := op.Method
-	auth := c.resolveAuth(ctx, op, method)
+	target := c.baseURL
+	if urlOverride != "" {
+		target = urlOverride
+	}
+	credentialError := ""
+	if insecureHTTP(target, c.allowInsecureHTTP) {
+		credentialError = insecureHTTPAuth
+	}
+	// A stream's connect deadline is recorded without ending its ctx;
+	// authentication and key reservation are bounded by it here.
+	if at, ok := callDeadline(ctx); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadlineCause(ctx, at, errCallDeadline)
+		defer cancel()
+	}
+	if deadlineExpired(ctx) {
+		return nil, deadlineFailure(op.ID, "before the request could be sent")
+	}
+	auth := c.resolveAuth(ctx, op, method, credentialError)
 	if auth.failed != "" {
+		if deadlineExpired(ctx) {
+			return nil, deadlineFailure(op.ID, "while authenticating")
+		}
 		return nil, newDiag(op.ID, AuthFailed).remedy(auth.failed).err()
 	}
 	var secrets secretSet
@@ -539,6 +604,17 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 	}
 	var headers headerBag
 	c.buildHeaders(op, args, opts, &auth.plan, &headers)
+	if insecureHTTP(fullURL, c.allowInsecureHTTP) {
+		credentials := len(auth.plan.headers)+len(auth.plan.cookies)+len(auth.plan.query) > 0
+		for _, h := range headers.entries {
+			if h.secret || c.credentialHeader(h.name, false) {
+				credentials = true
+			}
+		}
+		if credentials {
+			return nil, newDiag(op.ID, AuthFailed).remedy(insecureHTTPAuth).err()
+		}
+	}
 
 	paramNames := map[string]bool{}
 	for _, prm := range argParams(op) {
@@ -547,7 +623,7 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 	bodyPaths := sensitiveBodyPaths(op)
 	var value any
 	hasValue := false
-	if !isSafeMethod(method) || method == "OPTIONS" {
+	if !isSafeMethod(method) || method == "OPTIONS" || method == "QUERY" {
 		value, hasValue = bodyValue(op, args, paramNames)
 	}
 	redact := func(display any) any {
@@ -586,6 +662,14 @@ func (c *ClientCore) prepare(ctx context.Context, op *OperationDescriptor, rawAr
 	}
 	if p == purposeServerPreview && op.Agent.Preview.Mode == "header" {
 		headers.set(op.Agent.Preview.Header, op.Agent.Preview.Value, false)
+	}
+	if insecureHTTP(fullURL, c.allowInsecureHTTP) {
+		for _, h := range headers.entries {
+			preserved := hasIdem && strings.EqualFold(h.name, header) && h.value == key
+			if (h.secret && !preserved) || c.credentialHeader(h.name, preserved) {
+				return nil, newDiag(op.ID, AuthFailed).remedy(insecureHTTPAuth).err()
+			}
+		}
 	}
 	for _, e := range headers.entries {
 		if validHeaderName(e.name) && validHeaderValue(e.value) {
@@ -936,6 +1020,9 @@ func (c *ClientCore) idempotencyKey(ctx context.Context, op *OperationDescriptor
 		}
 		key, err := reserveKeyContext(ctx, c.store, op.ID, logical, candidate)
 		if err != nil {
+			if deadlineExpired(ctx) {
+				return "", false, deadlineFailure(op.ID, "while reserving an idempotency key")
+			}
 			return "", false, refuse(err.Error())
 		}
 		if key == "" {

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Diagnostics with stable codes.
 //!
-//! Code ranges: `TG01xx` parsing, `TG02xx` refs and cycles, `TG03xx` type
+//! Code ranges: `TG01xx` parsing (`TG0140`-`TG0159`: constructs only OpenAPI 3.2
+//! has, one code per feature), `TG02xx` refs and cycles, `TG03xx` type
 //! normalization, `TG04xx` naming, `TG05xx` pagination/auth inference,
 //! `TG06xx` manifests, `TG07xx` emitter limits, `TG08xx` external emitters,
 //! `TG09xx` staleness/CI, overlay suggestions and the response-contract
@@ -205,6 +206,15 @@ pub mod codes {
             "remote input SHA256 differs from its pin or conversion",
         ),
         ("TG0123", "remote input cache is missing, invalid or unsafe"),
+        (
+            "TG0124",
+            "interrupted refresh-import --apply must be resumed or rolled back",
+        ),
+        ("TG0128", "project does not match its tungsten.lock.json"),
+        (
+            "TG0129",
+            "target no longer generates the output recorded in the lock",
+        ),
         ("TG0130", "invalid Git input reference"),
         ("TG0131", "Git acquisition or ref resolution failed"),
         ("TG0132", "Git input exceeds its acquisition safety budget"),
@@ -215,6 +225,62 @@ pub mod codes {
         (
             "TG0134",
             "Git discovery requires exactly one input document",
+        ),
+        (
+            "TG0140",
+            "OpenAPI 3.2 `$self` would change how references resolve",
+        ),
+        (
+            "TG0141",
+            "OpenAPI 3.2 `query` HTTP method (retired: now compiled)",
+        ),
+        (
+            "TG0142",
+            "OpenAPI 3.2 `additionalOperations` method cannot be sent",
+        ),
+        (
+            "TG0143",
+            "OpenAPI 3.2 `querystring` parameter cannot be compiled",
+        ),
+        (
+            "TG0144",
+            "OpenAPI 3.2 `cookie` parameter style outside a cookie parameter",
+        ),
+        (
+            "TG0145",
+            "This use of OpenAPI 3.2 `itemSchema` for sequential and streaming media types is not supported",
+        ),
+        (
+            "TG0146",
+            "OpenAPI 3.2 positional multipart encoding is not supported",
+        ),
+        ("TG0147", "OpenAPI 3.2 nested encoding is not supported"),
+        (
+            "TG0148",
+            "OpenAPI 3.2 reusable media types (retired: now compiled)",
+        ),
+        (
+            "TG0149",
+            "OpenAPI 3.2 discriminator `defaultMapping` (retired: now compiled)",
+        ),
+        (
+            "TG0150",
+            "OpenAPI 3.2 OAuth 2.0 device authorization flow (retired: now compiled)",
+        ),
+        (
+            "TG0151",
+            "OpenAPI 3.2 security requirement URI names no scheme of an input document",
+        ),
+        ("TG0152", "OpenAPI 3.2 `oauth2MetadataUrl` is ignored"),
+        ("TG0153", "OpenAPI 3.2 tag `parent` and `kind` are ignored"),
+        (
+            "TG0154",
+            "OpenAPI 3.2 example `dataValue` and `serializedValue` are ignored",
+        ),
+        ("TG0155", "OpenAPI 3.2 XML `nodeType` is ignored"),
+        (
+            "TG0156",
+            "OpenAPI 3.2 descriptive fields (tag and response `summary`, server `name`, scheme `deprecated`) are ignored",
         ),
         ("TG0201", "unresolvable $ref"),
         (
@@ -334,6 +400,31 @@ pub mod codes {
             "agent.yml option not applied by this version; ignored",
         ),
         ("TG0614", "gates entry no operation is gated by"),
+        (
+            "TG0615",
+            "spec safety is below the HTTP-method default without a tools override",
+        ),
+        (
+            "TG0616",
+            "spec removes preview from an operation with side effects without a tools override",
+        ),
+        (
+            "TG0640",
+            "workspace discovery reached a limit; projects were not searched",
+        ),
+        (
+            "TG0641",
+            "a directory holds more than one tungsten manifest",
+        ),
+        (
+            "TG0642",
+            "two projects share or nest their output directories",
+        ),
+        (
+            "TG0643",
+            "a manifest is a symbolic link; workspace discovery does not follow it",
+        ),
+        ("TG0644", "no workspace project has the selected id"),
         ("TG0701", "generated output could not be written"),
         ("TG0702", "target has no emitter in this version; skipped"),
         (
@@ -347,6 +438,10 @@ pub mod codes {
         (
             "TG0705",
             "target does not declare enforced imported-operation policy support; not generated",
+        ),
+        (
+            "TG0706",
+            "target does not declare the IR's protocol; not generated",
         ),
         (
             "TG0710",
@@ -389,6 +484,11 @@ pub mod codes {
         (
             "TG0727",
             "MCP tool output schema over the output token budget even without the types it references",
+        ),
+        ("TG0728", "invalid mcp-python target option; default used"),
+        (
+            "TG0729",
+            "the experimental mcp-python server cannot run macros the Python SDK does not emit",
         ),
         (
             "TG0730",
@@ -481,6 +581,18 @@ pub mod codes {
             "TG0808",
             "external emitter does not declare imported-operation policy enforcement",
         ),
+        (
+            "TG0809",
+            "selected host policy is invalid or does not match its digest",
+        ),
+        (
+            "TG0810",
+            "external target constraints exceed a protected ceiling or are invalid",
+        ),
+        (
+            "TG0811",
+            "external execution is denied by the selected host policy",
+        ),
         ("TG0901", "generated output is stale relative to its inputs"),
         (
             "TG0902",
@@ -533,7 +645,7 @@ pub mod codes {
         ),
         (
             "TG1021",
-            "schema has no C# type in the csharp target; the runtime's JsonNode is used",
+            "allOf without members has no C# type in the csharp target; the runtime's JsonNode is used",
         ),
         (
             "TG1022",
@@ -545,7 +657,7 @@ pub mod codes {
         ),
         (
             "TG1024",
-            "different success bodies by status: the csharp typed result is the JsonNode",
+            "reserved: different success bodies by status are a record of answers in the csharp target",
         ),
         (
             "TG1025",
@@ -599,7 +711,7 @@ pub mod codes {
         ("TG1070", "invalid dart target option; the default is used"),
         (
             "TG1071",
-            "schema has no Dart type in the dart target; the JSON value (Object?) is used",
+            "schema has no Dart type in the dart target (allOf without members, enum beyond 64 bits); the JSON value (Object?) is used",
         ),
         (
             "TG1072",
@@ -611,7 +723,7 @@ pub mod codes {
         ),
         (
             "TG1074",
-            "different success bodies by status: the dart typed result is the JSON value (Object?)",
+            "reserved: different success bodies by status are a sealed class of answers in the dart target",
         ),
         (
             "TG1075",
@@ -623,7 +735,7 @@ pub mod codes {
         ),
         (
             "TG1081",
-            "schema has no F# type in the fsharp target; the runtime's JsonNode is used",
+            "allOf without members has no F# type in the fsharp target; the runtime's JsonNode is used",
         ),
         (
             "TG1082",
@@ -635,7 +747,7 @@ pub mod codes {
         ),
         (
             "TG1084",
-            "different success bodies by status: the fsharp typed result is the JsonNode",
+            "reserved: different success bodies by status are a union of answers in the fsharp target",
         ),
         (
             "TG1085",

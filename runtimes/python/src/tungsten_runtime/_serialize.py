@@ -13,10 +13,12 @@ from urllib.parse import quote
 
 import httpx
 
+from ._classify import is_json_media
 from ._json import FilePart, canonical_json, iso_datetime, js_number, json_text, parse_json
+from ._upload import UploadSource
 from ._util import REDACTED, binary_size, is_array, is_binary, is_record, usv, utf8
 from .sentinels import UNSET
-from .types import BodyDescriptor, OperationDescriptor, ParamDescriptor
+from .types import BodyDescriptor, OperationDescriptor, ParamDescriptor, PartDescriptor
 
 
 class SerializationError(Exception):
@@ -147,8 +149,34 @@ def serialize_header_param(p: ParamDescriptor, value: object) -> str:
     return scalar(value)
 
 
+# RFC 6265 ``cookie-octet``s.
+_COOKIE_OCTET = re.compile(r"[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]")
+
+
+def _cookie_text(text: str) -> str:
+    """A ``cookie`` style value as written; only characters a cookie cannot carry are percent-encoded."""
+    return "".join(ch if _COOKIE_OCTET.fullmatch(ch) else enc(ch) for ch in text)
+
+
+def _serialize_cookie_style(p: ParamDescriptor, value: object) -> str:
+    """OpenAPI 3.2 ``cookie`` style: ``n=v``, ``n=v1,v2`` or exploded ``n=v1; n=v2`` and ``k=v; k2=v2``."""
+    if is_array(value):
+        items = [_cookie_text(scalar(v)) for v in value if _present(v)]
+        if p["explode"] is True and items:
+            return "; ".join(f"{p['wire']}={i}" for i in items)
+        return f"{p['wire']}={','.join(items)}"
+    if is_record(value):
+        pairs = [(_cookie_text(k), _cookie_text(scalar(v))) for k, v in _entries(value)]
+        if p["explode"] is True and pairs:
+            return "; ".join(f"{k}={v}" for k, v in pairs)
+        return f"{p['wire']}={','.join(part for pair in pairs for part in pair)}"
+    return f"{p['wire']}={_cookie_text(scalar(value))}"
+
+
 def serialize_cookie_param(p: ParamDescriptor, value: object) -> str:
-    """``name=value`` for one cookie parameter (``form`` style, values encoded)."""
+    """``name=value`` for one cookie parameter (``form`` style, values encoded; or ``cookie`` style)."""
+    if p["style"] == "cookie":
+        return _serialize_cookie_style(p, value)
     if is_array(value):
         return f"{p['wire']}={','.join(enc(scalar(v)) for v in value if _present(v))}"
     if is_record(value):
@@ -172,9 +200,30 @@ class EncodedBody:
     raw: object
     #: Bytes or text whose SHA-256 is the ``content_hash`` key.
     hash_material: str | bytes | None
+    #: A streamed body: ``body`` is then None and each attempt reads the source.
+    upload: UploadSource | None = None
 
 
 NO_BODY = EncodedBody(None, None, None, None, None)
+
+
+def _upload_path(value: object, path: str, depth: int = 0) -> str | None:
+    """The path of an ``UploadSource`` inside ``value``, or None."""
+    if isinstance(value, UploadSource):
+        return path
+    if depth > 64:
+        return None
+    if is_record(value):
+        for k, v in value.items():
+            found = _upload_path(v, f"{path}.{k}", depth + 1)
+            if found is not None:
+                return found
+    elif is_array(value):
+        for i, v in enumerate(value):
+            found = _upload_path(v, f"{path}[{i}]", depth + 1)
+            if found is not None:
+                return found
+    return None
 
 
 def body_value(op: OperationDescriptor, args: Mapping[str, object], param_names: Collection[str]) -> object:
@@ -258,6 +307,15 @@ def encode_body(
     encoding = descriptor["encoding"] if descriptor is not None else "json"
     media_type = descriptor["media_type"] if descriptor is not None else "application/json"
     parameter = "body"
+    nested = (
+        None if encoding == "bytes" and isinstance(value, UploadSource) else _upload_path(value, parameter)
+    )
+    if nested is not None:
+        raise SerializationError(
+            nested,
+            "bytes or a binary file: an UploadSource can only be the whole body of a binary request",
+            "<upload>",
+        )
     if encoding == "json":
         try:
             text = json_text(value)
@@ -273,33 +331,56 @@ def encode_body(
     if encoding == "multipart":
         if not is_record(value):
             raise SerializationError(parameter, "a mapping of multipart fields", value)
-        files: list[tuple[str, tuple[str | None, bytes, str | None]]] = []
+        files: list[tuple[str, tuple[str | None, bytes, str | None, dict[str, str]]]] = []
+
+        def add(name: str, filename: str | None, content: bytes, content_type: str | None) -> None:
+            # httpx adds Content-Type to the headers mapping it is given: a fresh one per part.
+            files.append((name, (filename, content, content_type, dict(part_headers))))
+
         display: dict[str, object] = {}
+        declared_parts: dict[str, PartDescriptor] = {}
+        for declared_part in descriptor.get("parts", []) if descriptor is not None else []:
+            declared_parts.setdefault(declared_part["name"], declared_part)
         for k, v in _entries(value):
             items = [item for item in v if _present(item)] if is_array(v) else [v]
             shown: list[object] = []
+            declared_part = declared_parts.get(k)
+            declared = declared_part.get("content_type") if declared_part is not None else None
+            part_headers = {
+                h["name"]: h["value"]
+                for h in (declared_part.get("headers", []) if declared_part is not None else [])
+            }
+            declared_json = declared is not None and is_json_media(declared.split(";", 1)[0].strip().lower())
             for item in items:
                 if is_binary(item):
                     part = _file_of(item, k)
-                    content_type = part.content_type or "application/octet-stream"
+                    content_type = part.content_type or declared or "application/octet-stream"
                     if not _valid_media_type(content_type):
                         raise SerializationError(
                             parameter, "multipart file content types that are valid media types", value
                         )
-                    files.append(
-                        (k, (part.filename if part.filename is not None else k, part.content, content_type))
-                    )
-                    shown.append(_binary_display(item, part.content_type or ""))
+                    add(k, part.filename if part.filename is not None else k, part.content, content_type)
+                    shown.append(_binary_display(item, part.content_type or declared or ""))
                 elif is_record(item):
+                    part_type = declared if declared is not None and declared_json else "application/json"
                     try:
-                        files.append((k, (None, utf8(json_text(item)), "application/json")))
+                        add(k, None, utf8(json_text(item)), part_type)
                     except (TypeError, RecursionError) as error:
                         raise SerializationError(
                             parameter, "JSON-serializable multipart fields", item
                         ) from error
                     shown.append(item)
+                elif declared is not None:
+                    try:
+                        text = json_text(item) if declared_json else scalar(item)
+                    except (TypeError, RecursionError) as error:
+                        raise SerializationError(
+                            parameter, "JSON-serializable multipart fields", item
+                        ) from error
+                    add(k, None, utf8(text), declared)
+                    shown.append(scalar(item))
                 else:
-                    files.append((k, (None, utf8(scalar(item)), None)))
+                    add(k, None, utf8(scalar(item)), None)
                     shown.append(scalar(item))
             display[k] = shown if is_array(v) else shown[0] if len(shown) > 0 else None
         request = httpx.Request("POST", "http://multipart.invalid/", files=files)
@@ -312,6 +393,10 @@ def encode_body(
             canonical_json(value),
         )
     if encoding == "bytes":
+        if isinstance(value, UploadSource):
+            size = "unknown length" if value.length is None else f"{value.length} bytes"
+            summary = f"<upload of {size}{f' of {media_type}' if media_type else ''}>"
+            return EncodedBody(None, media_type, summary, summary, None, value)
         if is_binary(value):
             material = value.content if isinstance(value, FilePart) else bytes(value)
         elif isinstance(value, str):

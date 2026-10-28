@@ -549,7 +549,7 @@ func (g *gen) clientFile(namespaces []*nsPlan) *writer {
 	w.line("}")
 	w.line("")
 	if g.hasAuthorizationCode() {
-		w.comment("OAuth returns the OAuth2 authorization-code helpers of a scheme: PKCE, the authorization URL, the code exchange and refresh.")
+		w.comment("OAuth returns managed authorization-code helpers: bound one-use S256/state attempts, full callback validation, refresh and logout. LowLevel helpers require application-owned protocol security.")
 		w.line("func (c *Client) OAuth(scheme string) *tungsten.OAuthFlow {")
 		w.line("return c.core.OAuth(scheme)")
 		w.line("}")

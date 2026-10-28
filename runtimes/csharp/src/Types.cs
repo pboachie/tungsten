@@ -545,6 +545,8 @@ public interface IIdempotencyStore
 /// <summary>Configures a client.</summary>
 public sealed record ClientOptions
 {
+    /// <summary>Explicitly permits credentials over non-loopback HTTP, including OAuth. Default false; localhost, 127/8 and ::1 remain usable.</summary>
+    public bool AllowInsecureHttp { get; init; }
     /// <summary>Restricts redirects to same_origin_read or none; none always wins and requires the default HTTP client.</summary>
     public string? Redirects { get; init; }
 
@@ -561,8 +563,12 @@ public sealed record ClientOptions
     public IReadOnlyDictionary<string, Credential>? Auth { get; init; }
     /// <summary>Holds the tokens of authorizationCode schemes. Default: in memory, per client.</summary>
     public ITokenStore? TokenStore { get; init; }
+    /// <summary>Separate code/refresh response cap; null inherits 64 KiB. Must be a positive safe integer.</summary>
+    public long? MaxOAuthTokenResponseBytes { get; init; }
     /// <summary>The per-attempt timeout (default 30 s).</summary>
     public TimeSpan? Timeout { get; init; }
+    /// <summary>The total deadline of one logical call, see <see cref="CallOptions.Deadline"/>. Default: none (only <see cref="Timeout"/> per attempt).</summary>
+    public TimeSpan? Deadline { get; init; }
     /// <summary>Overrides the API's per-tier retry defaults, for every tier.</summary>
     public RetryOptions? Retries { get; init; }
     public IIdempotencyStore? IdempotencyStore { get; init; }
@@ -574,7 +580,7 @@ public sealed record ClientOptions
     public IReadOnlyDictionary<string, string>? Headers { get; init; }
     /// <summary>The largest server-sent event a stream accepts, in UTF-8 bytes (default 1 MiB).</summary>
     public int? MaxEventBytes { get; init; }
-    /// <summary>Maximum ordinary response bytes; null is unbounded. Must be a positive safe integer.</summary>
+    /// <summary>Maximum ordinary response bytes; null inherits 4 MiB. Must be a positive safe integer.</summary>
     public long? MaxResponseBytes { get; init; }
     /// <summary>Bounds collecting a stream (default 4 MiB).</summary>
     public int? MaxCollectBytes { get; init; }
@@ -593,7 +599,10 @@ public sealed record ClientOptions
     /// silent stream, without a reconnect.
     /// </summary>
     public TimeSpan? IdleTimeout { get; init; }
-    /// <summary>Signs confirmation tokens; default random per client.</summary>
+    /// <summary>
+    /// Signs confirmation tokens with at least 32 cryptographically random bytes, copied
+    /// at construction. Shorter keys fail construction; null generates a per-client key.
+    /// </summary>
     public byte[]? ConfirmationKey { get; init; }
     /// <summary>
     /// Used for every request; it must not follow redirects. Default: a client without redirects,
@@ -626,11 +635,24 @@ public sealed record CallOptions
     public bool RefuseConfirmYes { get; init; }
     /// <summary>The per-attempt timeout; null uses the client's.</summary>
     public TimeSpan? Timeout { get; init; }
+    /// <summary>
+    /// The total deadline of this call, overriding the client's; null or zero uses the client's
+    /// (default none). Measured on a monotonic clock from the call, it bounds authentication,
+    /// idempotency-key reservation, every attempt (each one's <see cref="Timeout"/> is cut to the
+    /// time left), retry waits, response bodies and verification; for pages, polls and macros it
+    /// bounds the whole traversal, poll or macro. No attempt starts after it expires (code
+    /// DEADLINE_EXCEEDED). For a stream it bounds connecting and each reconnect, never an open
+    /// stream. A mutation already sent when it expires reports OUTCOME_UNKNOWN, never a blind
+    /// replay. A shared token refresh is not cancelled, only no longer waited for.
+    /// </summary>
+    public TimeSpan? Deadline { get; init; }
+    /// <summary>The absolute monotonic deadline (ms) fixed by the public entry point; nested work inherits it.</summary>
+    internal double? CallDeadline { get; init; }
     /// <summary>Runs the operation's verification hook after success.</summary>
     public bool Verify { get; init; }
     public IReadOnlyDictionary<string, string>? Headers { get; init; }
 
     /// <summary>Never shows keys or tokens.</summary>
     public override string ToString() =>
-        $"CallOptions {{ IdempotencyKey = {(IdempotencyKey is null ? "null" : Util.Redacted)}, Confirm = {Confirm?.ToString() ?? "null"}, Timeout = {Timeout}, Verify = {Verify}, Headers = [{string.Join(" ", Headers?.Keys ?? System.Array.Empty<string>())}] }}";
+        $"CallOptions {{ IdempotencyKey = {(IdempotencyKey is null ? "null" : Util.Redacted)}, Confirm = {Confirm?.ToString() ?? "null"}, Timeout = {Timeout}, Deadline = {Deadline}, Verify = {Verify}, Headers = [{string.Join(" ", Headers?.Keys ?? System.Array.Empty<string>())}] }}";
 }

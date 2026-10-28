@@ -18,6 +18,10 @@ module Tungsten
 
       # Generated clients require this capability when redirects are forbidden.
       def self.require_redirect_policy_v1; end
+
+      # Generated clients require this capability when an operation carries
+      # an imported-operation policy.
+      def self.require_import_policy_v1; end
       DEFAULT_POLL_INTERVAL_MS = 1000
       DEFAULT_VERIFY_BUDGET_MS = 30_000
       RETRYABLE_CATEGORIES = %w[RATE_LIMITED UPSTREAM_UNAVAILABLE TRANSPORT_FAILED OUTCOME_UNKNOWN].freeze
@@ -28,6 +32,10 @@ module Tungsten
 
       attr_reader :descriptors, :base_url, :timeout_ms, :max_event_bytes, :max_collect_bytes, :max_collect_ms,
                   :max_reconnects, :reconnect_max_ms, :idle_timeout_ms
+
+      # Default Object inspection would include configured credentials/keys.
+      def inspect = "#<Tungsten::Runtime::ClientCore #{REDACTED}>"
+      alias_method :to_s, :inspect
 
       # @param descriptors [Descriptors] the SDK descriptor document
       # @param options [ClientOptions, Hash, nil]
@@ -49,11 +57,14 @@ module Tungsten
         end
 
         @base_url = base
+        @allow_insecure_http = o.allow_insecure_http == true
         @auth = (o.auth || {}).to_h.transform_keys(&:to_s)
         @headers = (o.headers || {}).to_h.transform_keys(&:to_s)
         @timeout_ms = positive(o.timeout_ms) || DEFAULT_TIMEOUT_MS
+        @deadline_ms = positive(o.deadline_ms)
         @max_event_bytes = positive(o.max_event_bytes) || DEFAULT_MAX_EVENT_BYTES
-        @max_response_bytes = o.max_response_bytes
+        @max_response_bytes = o.max_response_bytes.nil? ? 4 * 1024 * 1024 : o.max_response_bytes
+        @max_oauth_token_response_bytes = o.max_oauth_token_response_bytes.nil? ? 64 * 1024 : o.max_oauth_token_response_bytes
         @max_collect_bytes = positive(o.max_collect_bytes) || DEFAULT_MAX_COLLECT_BYTES
         @max_collect_ms = positive(o.max_collect_ms) || DEFAULT_MAX_COLLECT_MS
         @max_reconnects = o.max_reconnects.nil? ? DEFAULT_MAX_RECONNECTS : o.max_reconnects.to_i.clamp(0, 1000)
@@ -64,7 +75,12 @@ module Tungsten
         @middleware = Array(o.middleware)
         @validate_responses = %w[warn strict off].include?(o.validate_responses.to_s) ? o.validate_responses.to_s : "warn"
         @on_diagnostic = o.on_diagnostic
-        @confirmation_key = o.confirmation_key.to_s.empty? ? SecureRandom.random_bytes(32) : o.confirmation_key.to_s.b
+        key = o.confirmation_key
+        copied_key = String.new(key, encoding: Encoding::BINARY) if key.is_a?(String)
+        if !key.nil? && (copied_key.nil? || copied_key.bytesize < 32)
+          raise ConfigError, "confirmation_key must contain at least 32 bytes; omit it to generate a random key"
+        end
+        @confirmation_key = copied_key || SecureRandom.random_bytes(32)
         @now_fn = o.now
         @random_fn = o.random
         @token_store = o.token_store || MemoryTokenStore.new
@@ -75,6 +91,7 @@ module Tungsten
         @used_tokens = {}
         @oauth_gates = {}
         @registry = descriptors.operations.dup
+        @oauth_sessions = OAuthSessions.new(self)
       end
 
       # The API descriptor (the document's `api`).
@@ -144,7 +161,51 @@ module Tungsten
           return Runtime.diag(d.id, "VALIDATION_FAILED").param("opts").expected("call options")
                         .remedy("Pass the call options as a Hash of idempotency_key, confirm, timeout_ms, verify and headers (#{e.message}).").err
         end
-        yield d, o
+        yield d, with_call_deadline(o)
+      end
+
+      # `until_deadline` gave up waiting.
+      DEADLINE_EXPIRED = Object.new.freeze
+
+      # The options with the absolute deadline of one logical call, fixed
+      # when a public entry point starts it. Nested work (pages, polls,
+      # verification, macro steps) inherits it and takes the earlier one, so
+      # it is never restarted or extended.
+      def with_call_deadline(opts)
+        ms = opts.deadline_ms.is_a?(Numeric) && opts.deadline_ms.positive? ? opts.deadline_ms : @deadline_ms
+        return opts unless ms
+
+        at = monotonic_ms + ms
+        opts.with(call_deadline: opts.call_deadline ? [opts.call_deadline, at].min : at)
+      end
+
+      # Milliseconds left before the call's deadline, nil without one.
+      def deadline_left(opts) = opts.call_deadline && (opts.call_deadline - monotonic_ms)
+
+      def deadline_passed?(opts)
+        left = deadline_left(opts)
+        !left.nil? && left <= 0
+      end
+
+      def deadline_expired(op, during)
+        Runtime.diag(op.id, "TRANSPORT_FAILED").code("DEADLINE_EXCEEDED").retrying("never")
+               .remedy("The operation deadline (deadline_ms) expired #{during}, so the request was not sent. Call again with a larger deadline_ms.").err
+      end
+
+      # The block's value, waited for only until the call's deadline
+      # (DEADLINE_EXPIRED after it). The work runs on its own thread and is
+      # not cancelled: a shared token refresh or store write keeps running
+      # for its other waiters, bounded by its own timeout.
+      def until_deadline(opts, &work)
+        left = deadline_left(opts)
+        return work.call if left.nil?
+        return DEADLINE_EXPIRED if left <= 0
+
+        worker = Thread.new do
+          Thread.current.report_on_exception = false
+          work.call
+        end
+        worker.join(left / 1000.0) ? worker.value : DEADLINE_EXPIRED
       end
 
       def random
@@ -231,8 +292,8 @@ module Tungsten
         current = p.headers.get("Authorization")
         return rejected unless current&.start_with?("Bearer ")
 
-        token = refresh_after_rejection(scheme, current.delete_prefix("Bearer "))
-        return rejected unless token
+        token = until_deadline(opts) { refresh_after_rejection(scheme, current.delete_prefix("Bearer ")) }
+        return rejected if DEADLINE_EXPIRED.equal?(token) || !token
 
         p.headers.set("Authorization", "Bearer #{token}", true)
         p.secrets << token
@@ -261,7 +322,10 @@ module Tungsten
         if op.request
           issues =
             begin
-              op.request.validate(args)
+              notes = []
+              op.request.validate(args, notes).tap do
+                report_unchecked(op.id, "VALIDATION_FAILED", notes) { |path| Helpers.argument_path(op, path) }
+              end
             rescue StandardError
               return Runtime.diag(op.id, "UNEXPECTED_RESPONSE").retrying("never")
                             .remedy("The SDK failed while building or sending the request (the request validator failed). This is a bug in the generated SDK or the runtime; report it. Nothing was sent.").err
@@ -401,10 +465,24 @@ module Tungsten
                .remedy("The operation descriptor is invalid: #{problem}. Regenerate the SDK or fix the descriptor; nothing was sent.").err
       end
 
+      def response_limit(op, opts)
+        cap = opts.max_response_bytes.nil? ? @max_response_bytes : opts.max_response_bytes
+        unless cap.is_a?(Integer) && cap.between?(1, 9_007_199_254_740_991)
+          return Runtime.diag(op.id, "VALIDATION_FAILED").param("maxResponseBytes")
+                        .remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").err
+        end
+        cap
+      end
+
       # Validate, authenticate and render a request. `purpose` is :call,
       # :preview, :server_preview or :macro_preview.
       def prepare(op, raw_args, opts, purpose, url_override, claim)
         if (err = descriptor_err(op))
+          return err
+        end
+        limit = response_limit(op, opts)
+        return limit if limit.is_a?(Err)
+        if (err = import_scope_err(op, url_override || @base_url))
           return err
         end
 
@@ -427,7 +505,10 @@ module Tungsten
           return err if err
         end
         method = op.http_method
-        auth = resolve_auth(op, method)
+        return deadline_expired(op, "before the request could be sent") if deadline_passed?(opts)
+
+        auth = until_deadline(opts) { resolve_auth(op, method, insecure_http?(url_override || @base_url) ? INSECURE_HTTP_AUTH : nil) }
+        return deadline_expired(op, "while authenticating") if DEADLINE_EXPIRED.equal?(auth)
         return Runtime.diag(op.id, "AUTH_FAILED").remedy(auth.failed).err if auth.failed
 
         secrets = auth.secrets
@@ -442,10 +523,14 @@ module Tungsten
         full_url, display_url = urls
         headers = HeaderBag.new
         build_headers(op, args, opts, auth.plan, headers)
+        if insecure_http?(full_url) && (!auth.plan.headers.empty? || !auth.plan.cookies.empty? || !auth.plan.query.empty? ||
+            headers.entries.any? { |h| h.secret || credential_header?(h.name) })
+          return Runtime.diag(op.id, "AUTH_FAILED").remedy(INSECURE_HTTP_AUTH).err
+        end
         param_names = op.argument_params.map(&:name)
         body_paths = Helpers.sensitive_body_paths(op)
         value = UNSET
-        value = Serialize.body_value(op, args, param_names) if !safe_method?(method) || method == "OPTIONS"
+        value = Serialize.body_value(op, args, param_names) if !safe_method?(method) || %w[OPTIONS QUERY].include?(method)
         redact = lambda do |display|
           next REDACTED if body_paths.include?("")
 
@@ -458,7 +543,8 @@ module Tungsten
         end
         headers.set("Content-Type", encoded.content_type, false) if encoded.content_type
         header = Keys.header(op)
-        key = idempotency_key(op, args, opts, purpose, encoded)
+        key = until_deadline(opts) { idempotency_key(op, args, opts, purpose, encoded) }
+        return deadline_expired(op, "while reserving an idempotency key") if DEADLINE_EXPIRED.equal?(key)
         return key if key.is_a?(Err)
 
         policy = op.agent["idempotency"]["policy"]
@@ -471,6 +557,12 @@ module Tungsten
         auth.plan.headers.each { |name, v, secret| headers.set(name, v, secret) }
         if purpose == :server_preview && op.agent["preview"]["mode"] == "header"
           headers.set(op.agent["preview"]["header"], op.agent["preview"]["value"], false)
+        end
+        if insecure_http?(full_url) && headers.entries.any? { |h|
+            preserved = key && h.name.casecmp?(header) && h.value == key
+            (h.secret && !preserved) || credential_header?(h.name, preserved)
+          }
+          return Runtime.diag(op.id, "AUTH_FAILED").remedy(INSECURE_HTTP_AUTH).err
         end
         headers.entries.each do |e|
           next if Serialize.valid_header_name?(e.name) && Serialize.valid_header_value?(e.value)
@@ -627,8 +719,37 @@ module Tungsten
           display = root + displayed + join.call(shown)
         end
         return bad_base(op) unless valid_base_url?(full)
+        if (err = import_scope_err(op, full))
+          return err
+        end
 
         [full, display]
+      end
+
+      # The origin (scheme, host and port) of an absolute http(s) URL without
+      # credentials, or nil.
+      def origin_of(url)
+        return nil unless url.is_a?(String) && valid_base_url?(url)
+
+        u = URI.parse(url)
+        "#{u.scheme.downcase}://#{u.host.downcase}:#{u.port}"
+      rescue URI::Error
+        nil
+      end
+
+      # Refuses a reviewed imported operation whose target lies outside the
+      # origins its review covers. A malformed or missing scope fails closed.
+      def import_scope_err(op, target)
+        policy = op.agent["import_policy"]
+        return nil unless policy.is_a?(Hash) && policy["reviewed"] == true
+
+        actual = origin_of(target)
+        origins = policy["allowed_origins"]
+        allowed = !actual.nil? && origins.is_a?(Array) && origins.any? { |o| origin_of(o) == actual }
+        return nil if allowed
+
+        Runtime.diag(op.id, "VALIDATION_FAILED").param("base_url").retrying("never")
+               .remedy("The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.").err
       end
 
       def query_pairs(raw)
@@ -782,11 +903,8 @@ module Tungsten
       # returned unread as [:stream, meta, body]; otherwise Ok or Err.
       def send_with(p, opts, stream)
         op = p.op
-        cap = opts.max_response_bytes.nil? ? @max_response_bytes : opts.max_response_bytes
-        unless cap.nil? || (cap.is_a?(Integer) && cap.between?(1, 9_007_199_254_740_991))
-          return Runtime.diag(op.id, "VALIDATION_FAILED").param("maxResponseBytes")
-                        .remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").err
-        end
+        cap = response_limit(op, opts)
+        return cap if cap.is_a?(Err)
         retries = retry_options(op)
         mutation = op.mutation?
         protected_ = Classify.replay_protection?(op, !p.key.nil?)
@@ -795,6 +913,12 @@ module Tungsten
         attempts = 0
         loop do
           attempts += 1
+          return deadline_expired(op, "before the request could be sent") if deadline_passed?(opts)
+
+          # Each attempt's timeout is cut to the time left before the call's deadline.
+          left = deadline_left(opts)
+          by_deadline = !left.nil? && left < timeout
+          attempt_ms = by_deadline ? [left.to_i, 1].max : timeout
           rctx = request_context(p, attempts)
           hook(:on_request, rctx)
           target = p.url
@@ -802,8 +926,9 @@ module Tungsten
           body = p.body
           headers = p.headers.entries.map { |e| [e.name, e.value] }
           send_once = lambda do
-            Transport.attempt(url: target, method: method, headers: headers, body: body, timeout_ms: timeout, stream: stream,
-                              idle_ms: stream ? @idle_timeout_ms : nil, max_response_bytes: cap)
+            # An open stream keeps the idle bound of an uncut attempt; the deadline only bounds connecting.
+            Transport.attempt(url: target, method: method, headers: headers, body: body, timeout_ms: attempt_ms, stream: stream,
+                              idle_ms: stream ? @idle_timeout_ms || timeout : nil, max_response_bytes: cap)
           end
           outcome = send_once.call
           unless mutation || @redirects_disabled
@@ -825,7 +950,12 @@ module Tungsten
           end
           p.final_url = target
           ctx = Classify::CallContext.new(api: @api, op: op, key: p.key, key_header: p.key_header, attempts: attempts, check: check)
-          result = classify_response(ctx, p, outcome, rctx, timeout)
+          result =
+            if by_deadline && (outcome.kind == :timeout || (outcome.kind == :response && outcome.body_failure == "timeout" && !mutation))
+              deadline_timeout(ctx, outcome.kind == :response ? outcome.status : nil)
+            else
+              classify_response(ctx, p, outcome, rctx, timeout)
+            end
           return result unless result.is_a?(Err)
 
           d = Util.scrub_diagnostic(result.error, p.secrets)
@@ -847,9 +977,23 @@ module Tungsten
               else r * ceiling
               end
           end
+          # A retry that could not start before the deadline is not waited for.
+          left = deadline_left(opts)
+          return done if left && left <= delay
+
           hook(:on_retry, rctx, d)
           sleep([delay, 0].max / 1000.0)
         end
+      end
+
+      # The call's deadline ran out before a response (or a read's body) arrived.
+      def deadline_timeout(ctx, status)
+        cause = "The operation deadline expired before a response arrived."
+        return Err.new(error: Classify.outcome_unknown(ctx, cause)) if ctx.op.mutation?
+
+        Runtime.diag(ctx.op.id, "UPSTREAM_UNAVAILABLE").code("DEADLINE_EXCEEDED").status(status).retrying("never")
+               .remedy("#{cause} This read has no side effects; call again with a larger deadline_ms.")
+               .attempts(ctx.attempts).err
       end
 
       def classify_response(ctx, p, outcome, rctx, timeout)
@@ -940,7 +1084,7 @@ module Tungsten
           problem = Runtime.diag(op.id, "UNEXPECTED_RESPONSE").status(status).request_id(rid).param("response")
                            .expected(expected).remedy(remediation).attempts(attempts).build
         elsif mode != "off" && op.response && decoded.present?
-          issues = judge(op.response, decoded.value)
+          issues = judge(op.response, decoded.value, op.id, "response")
           unless issues.empty?
             issue = issues.first
             path_text = Runtime.issue_path(issue.path)
@@ -971,10 +1115,37 @@ module Tungsten
 
       # A validator that only judges (responses, page items, events): a
       # failure is an issue at the root.
-      def judge(validator, value)
-        validator.validate(value)
+      #
+      # The patterns the validator could not check are reported once through
+      # the observer (`PATTERN_UNCHECKED`), under `root` (for example
+      # "response"); `seen` deduplicates across several calls.
+      def judge(validator, value, operation, root, seen = nil)
+        notes = []
+        issues = validator.validate(value, notes)
+        report_unchecked(operation, "UNEXPECTED_RESPONSE", notes, seen) { |path| "#{root}#{Runtime.issue_path(path)}" }
+        issues
       rescue StandardError
         [Issue.new(path: [], message: "the response schema failed (the validator raised an error)")]
+      end
+
+      # Emits PATTERN_UNCHECKED for each schema pattern the runtime could not
+      # check: the value was accepted without it. The diagnostic names the
+      # path, the pattern and the reason, never the value.
+      def report_unchecked(operation, category, notes, seen = nil)
+        return if notes.empty? || @on_diagnostic.nil?
+
+        seen ||= {}
+        notes.each do |n|
+          param = yield(n.path)
+          key = [param, n.pattern]
+          next if seen.key?(key) || seen.length >= 16
+
+          seen[key] = true
+          emit(Runtime.diag(operation, category).code("PATTERN_UNCHECKED").retrying("never").param(param)
+                      .expected("a value matching the pattern /#{n.pattern}/")
+                      .remedy("The pattern /#{n.pattern}/ at #{param} was not checked because #{n.reason}; the value was accepted without it. The server still validates it.")
+                      .build)
+        end
       end
 
       # How to find out whether a mutation without replay protection took
@@ -1122,6 +1293,10 @@ module Tungsten
           if done || out_of_time
             return Ok.new(value: { "body" => body, "timed_out" => out_of_time }, raw: body, meta: response.meta)
           end
+
+          # The next poll could not be sent before the call's deadline, so it is not waited for.
+          left = deadline_left(opts)
+          return deadline_expired(op, "before the next poll") if left && left <= interval_ms
 
           sleep(interval_ms / 1000.0)
         end

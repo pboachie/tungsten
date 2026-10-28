@@ -89,7 +89,7 @@ pub(crate) fn internal_file(header: &str) -> String {
     w.line("// Helpers shared by the generated modules; not part of the package's API.");
     w.blank();
     w.line(
-        "import { isBinaryInput, type BinaryInput, type SchemaLike } from \"@elysra/tungsten-runtime\";",
+        "import { isBinaryInput, type BinaryInput, type PatternNote, type SchemaLike } from \"@elysra/tungsten-runtime\";",
     );
     w.line("import { z } from \"zod\";");
     w.blank();
@@ -101,22 +101,113 @@ pub(crate) fn internal_file(header: &str) -> String {
     w.blank();
     w.line(WITH_PATTERN);
     w.blank();
+    w.line(WITH_LENGTH);
+    w.blank();
     w.line(BINARY);
     w.finish()
 }
 
-const TO_SCHEMA_LIKE: &str = r#"/** A Zod schema as the runtime's `SchemaLike` (issue paths as strings and numbers). */
+const TO_SCHEMA_LIKE: &str = r#"/** Set while a parse reaches a pattern this engine cannot check (`reached`),
+ * and during the second pass that finds where (`probing`). */
+const patternProbe = { reached: false, probing: false };
+const UNCHECKED_PATTERN = "tungsten:unchecked-pattern:";
+/** The checks `withPattern` adds for patterns it cannot compile. */
+const uncheckedChecks = new WeakSet<object>();
+/** Schemas already walked for unions, and the unions already wrapped. */
+const probedRoots = new WeakSet<object>();
+const probedUnions = new WeakSet<object>();
+
+function isUnchecked(issue: z.core.$ZodRawIssue): boolean {
+  const fn = (issue.inst as { _zod?: { def?: { fn?: unknown } } } | undefined)?._zod?.def?.fn;
+  return typeof fn === "function" && uncheckedChecks.has(fn);
+}
+
+/** Make each union under `root` select, while probing, the variant the
+ * ordinary parse selects: the first one that fails only on unchecked
+ * patterns, rather than a later variant those failures would let through.
+ * Outside a probe the union parses as before. */
+function selectLikeParse(root: z.ZodType): void {
+  if (probedRoots.has(root)) return;
+  probedRoots.add(root);
+  const seen = new WeakSet<object>();
+  const stack: unknown[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (typeof node !== "object" || node === null || seen.has(node)) continue;
+    seen.add(node);
+    const internals = (node as { _zod?: z.core.$ZodTypeInternals })._zod;
+    if (internals === undefined) {
+      stack.push(...Object.values(node));
+      continue;
+    }
+    const def = internals.def as unknown as Record<string, unknown>;
+    if (def.type === "lazy") stack.push((internals as unknown as { innerType: unknown }).innerType);
+    stack.push(...Object.values(def));
+    if (def.type !== "union" || def.discriminator !== undefined || probedUnions.has(internals)) continue;
+    probedUnions.add(internals);
+    const options = def.options as z.core.$ZodType[];
+    const parse = internals.parse;
+    const probe: typeof parse = (payload, ctx) => {
+      if (!patternProbe.probing) return parse(payload, ctx);
+      for (const option of options) {
+        const result = option._zod.run({ value: payload.value, issues: [] }, ctx);
+        if (result instanceof Promise) return parse(payload, ctx);
+        if (result.issues.every(isUnchecked)) return result;
+      }
+      // No variant is selected: the union fails, and a rejected variant's
+      // unchecked patterns are not reported.
+      const failed = parse(payload, ctx);
+      if (!(failed instanceof Promise)) failed.issues = failed.issues.filter((issue) => !isUnchecked(issue));
+      return failed;
+    };
+    if (internals.run === parse) internals.run = probe;
+    internals.parse = probe;
+  }
+}
+
+function collectUnchecked(issues: readonly z.core.$ZodIssue[], out: PatternNote[]): void {
+  for (const issue of issues) {
+    const path = [...issue.path.map((p) => (typeof p === "symbol" ? String(p) : p))];
+    if (issue.message.startsWith(UNCHECKED_PATTERN)) {
+      const [pattern, reason] = JSON.parse(issue.message.slice(UNCHECKED_PATTERN.length)) as [string, string];
+      out.push({ path, pattern, reason });
+    }
+  }
+}
+
+/** Where the unchecked patterns were reached: parse again with the patterns
+ * that cannot be checked failing, and read the paths off those issues. */
+function uncheckedPatterns(schema: z.ZodType, value: unknown): PatternNote[] {
+  patternProbe.probing = true;
+  try {
+    selectLikeParse(schema);
+    const probe = schema.safeParse(value);
+    const notes: PatternNote[] = [];
+    if (!probe.success) collectUnchecked(probe.error.issues, notes);
+    return notes;
+  } catch {
+    return [];
+  } finally {
+    patternProbe.probing = false;
+  }
+}
+
+/** A Zod schema as the runtime's `SchemaLike` (issue paths as strings and numbers),
+ * with the patterns it could not check as `notes`. */
 export function toSchemaLike<T>(schema: z.ZodType<T>): SchemaLike<T> {
   return {
     safeParse(value: unknown) {
+      patternProbe.reached = false;
       const result = schema.safeParse(value);
-      if (result.success) return { success: true, data: result.data };
+      const found = patternProbe.reached ? uncheckedPatterns(schema, value) : [];
+      const notes = found.length > 0 ? { notes: found } : {};
+      if (result.success) return { success: true, data: result.data, ...notes };
       const issues = result.error.issues.map((issue) => ({
         path: issue.path.map((p) => (typeof p === "symbol" ? String(p) : p)),
         message: issue.message,
         code: issue.code,
       }));
-      return { success: false, error: { issues } };
+      return { success: false, error: { issues }, ...notes };
     },
   };
 }"#;
@@ -129,16 +220,42 @@ export function integer(): z.ZodNumber {
 
 const WITH_PATTERN: &str = r#"/** Adds a JSON Schema `pattern` (ECMA-262, Unicode mode when it compiles).
  * A pattern this engine cannot compile is not enforced, so loading the SDK
- * never fails; the server still validates it. */
-export function withPattern<S extends { regex(pattern: RegExp): S }>(schema: S, source: string): S {
+ * never fails and the value is accepted; the runtime reports it as a
+ * `PATTERN_UNCHECKED` diagnostic, and the server still validates it. */
+export function withPattern<S extends { regex(pattern: RegExp): S; refine(check: (value: string) => boolean, params: { message: string }): S }>(schema: S, source: string): S {
+  let reason = "this JavaScript engine cannot compile it";
   for (const flags of ["u", ""]) {
     try {
       return schema.regex(new RegExp(source, flags));
-    } catch {
+    } catch (error) {
       // Not valid with these flags; try the next.
+      if (error instanceof Error) reason = `this JavaScript engine cannot compile it (${error.message.slice(error.message.lastIndexOf(": ") + 2)})`;
     }
   }
-  return schema;
+  const check = (): boolean => {
+    patternProbe.reached = true;
+    return !patternProbe.probing;
+  };
+  uncheckedChecks.add(check);
+  return schema.refine(
+    check,
+    { message: UNCHECKED_PATTERN + JSON.stringify([source, reason]) },
+  );
+}"#;
+
+const WITH_LENGTH: &str = r#"/** Adds `minLength`/`maxLength`, counted in Unicode code points as JSON Schema
+ * counts them (Zod's `.min`/`.max` count UTF-16 code units, so an emoji would
+ * count twice). A surrogate pair is one code point, a lone surrogate is one. */
+export function withLength<S extends { refine(check: (value: string) => boolean, params: { message: string }): S }>(schema: S, min: number | undefined, max: number | undefined): S {
+  const size = (value: string): number => {
+    let n = 0;
+    for (const _ of value) n += 1;
+    return n;
+  };
+  let out = schema;
+  if (min !== undefined) out = out.refine((value) => value.length >= 2 * min || size(value) >= min, { message: `Too small: expected string to have >=${min} characters` });
+  if (max !== undefined) out = out.refine((value) => value.length <= max || size(value) <= max, { message: `Too big: expected string to have <=${max} characters` });
+  return out;
 }"#;
 
 const BINARY: &str = r#"/** Binary data in a request: bytes, a `Blob` or `File`, or `{ data, filename?, contentType? }`. */
@@ -155,7 +272,7 @@ fn client_paths(plan: &Plan<'_>) -> Vec<(usize, String)> {
             match m.kind {
                 MemberKind::Op(o) => out.push((o, format!("{prefix}.{}", m.name))),
                 MemberKind::Child(c) => walk(plan, c, &format!("{prefix}.{}", m.name), out),
-                MemberKind::Stream(_) => {}
+                MemberKind::Stream(_) | MemberKind::Download(_) => {}
             }
         }
     }
@@ -308,18 +425,23 @@ pub(crate) fn readme(
              `{name}` has an authorization-code flow. Configure the client with \
              `auth: {{ {key}: {{ flow: \"authorizationCode\", clientId, clientSecret, redirectUri }} }}` \
              (`clientSecret` is optional for a public client), send the user to the authorization URL \
-             and exchange the code they come back with. Tokens are kept in `ClientOptions.tokenStore` \
+             and validate their full callback through the managed attempt. Tokens are kept in `ClientOptions.tokenStore` \
              (in memory by default), sent on every call, refreshed before they expire and once after a 401.\n\n\
              ```ts\n\
-             const flow = client.oauth.{access};\n\
-             const pkce = await flow.pkce();\n\
-             const url = flow.authorizationUrl({{ state, codeChallenge: pkce.challenge }});\n\
-             // Redirect the user to url.value; the server sends them back with ?code=...\n\
-             await flow.exchangeCode({{ code, codeVerifier: pkce.verifier }});\n\
+             const flow = client.oauth{access};\n\
+             const started = await flow.authorizationUrl({{\n  \
+               sessionBinding, s256Supported: true,\n  \
+               issuerDefense: {{ kind: \"issuerResponse\", issuer }},\n\
+             }});\n\
+             if (!started.ok) throw new Error(started.error.remediation);\n\
+             // Open started.value.url in the browser; keep its handle in this session.\n\
+             await flow.exchangeCode({{\n  \
+               attemptHandle: started.value.attemptHandle, callbackUrl, sessionBinding,\n\
+             }});\n\
              ```\n\n",
             key = prop_key(name),
             access = if prop_key(name) == name {
-                name.to_string()
+                format!(".{name}")
             } else {
                 format!("[{}]", string_lit(name))
             },

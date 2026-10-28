@@ -8,7 +8,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde_json::{Map, Value};
 use url::Url;
 
-use crate::auth::{AuthPlan, AuthResolution, is_safe_method, resolve_auth};
+use crate::auth::{
+    AuthPlan, AuthResolution, INSECURE_HTTP_AUTH, credential_header, insecure_http, is_safe_method,
+    resolve_auth_transport,
+};
 use crate::client::ClientCore;
 use crate::confirm::{CONFIRMATION_TTL_MS, TokenCheck, check_token, token_expiry};
 use crate::envelope::Diag;
@@ -24,12 +27,12 @@ use crate::serialize::{
     valid_header_name, valid_header_value,
 };
 use crate::types::{
-    BodyShape, Category, Confirm, Error, HttpMethod, IdempotencyKind, OperationDescriptor,
-    ParamDescriptor, ParamLocation, ParamRole, PathSegment, PreviewMode, ResponseKind, Retryable,
-    Safety, Validation,
+    BodyEncoding, BodyShape, Category, Confirm, Error, HttpMethod, IdempotencyKind,
+    OperationDescriptor, ParamDescriptor, ParamLocation, ParamRole, PathSegment, PreviewMode,
+    ResponseKind, Retryable, Safety, Validation,
 };
 use crate::util::{
-    MAX_ARG_DEPTH, REDACTED, SecretSet, canonical_json, envelope_value, get_path, integral_numbers,
+    MAX_ARG_DEPTH, REDACTED, SecretSet, envelope_value, get_path, integral_numbers,
     looks_sensitive, nests_deeper_than, redact_paths, redact_sensitive_keys, sha256_hex,
     split_path, uuid_v4,
 };
@@ -108,6 +111,69 @@ pub(crate) struct Prepared<'a> {
     pub oauth: Option<String>,
     /// Persists across retries and a 401 refresh of this logical request.
     pub may_have_sent: AtomicBool,
+}
+
+/// A [`Prepared`] request without its borrow of the operation: an open stream
+/// keeps it so that a reconnect resends the same request (one auth phase per
+/// logical call), as the TypeScript and Python runtimes do.
+pub(crate) struct Detached {
+    args: Map<String, Value>,
+    method: HttpMethod,
+    url: String,
+    display_url: String,
+    headers: HeaderBag,
+    payload: Payload,
+    display_body: Value,
+    key: Option<String>,
+    key_header: String,
+    auth_query: Vec<(String, String)>,
+    hidden_query: Vec<String>,
+    secrets: SecretSet,
+    oauth: Option<String>,
+    may_have_sent: AtomicBool,
+}
+
+impl Prepared<'_> {
+    pub(crate) fn detach(self) -> Detached {
+        Detached {
+            args: self.args,
+            method: self.method,
+            url: self.url,
+            display_url: self.display_url,
+            headers: self.headers,
+            payload: self.payload,
+            display_body: self.display_body,
+            key: self.key,
+            key_header: self.key_header,
+            auth_query: self.auth_query,
+            hidden_query: self.hidden_query,
+            secrets: self.secrets,
+            oauth: self.oauth,
+            may_have_sent: self.may_have_sent,
+        }
+    }
+}
+
+impl Detached {
+    pub(crate) fn attach(self, op: &OperationDescriptor) -> Prepared<'_> {
+        Prepared {
+            op,
+            args: self.args,
+            method: self.method,
+            url: self.url,
+            display_url: self.display_url,
+            headers: self.headers,
+            payload: self.payload,
+            display_body: self.display_body,
+            key: self.key,
+            key_header: self.key_header,
+            auth_query: self.auth_query,
+            hidden_query: self.hidden_query,
+            secrets: self.secrets,
+            oauth: self.oauth,
+            may_have_sent: self.may_have_sent,
+        }
+    }
 }
 
 pub(crate) fn fail(diagnostic: crate::types::Diagnostic) -> Error {
@@ -262,7 +328,11 @@ impl ClientCore {
         if let Some(validator) = &op.request {
             let mut root = Value::Object(args.clone());
             integral_numbers(&mut root);
-            let Ok(outcome) = crate::validate::run(validator.as_ref(), &root) else {
+            let (outcome, notes) = crate::validate::run_noted(validator.as_ref(), &root);
+            self.report_unchecked(&op.id, Category::ValidationFailed, &notes, |path| {
+                argument_path(op, path)
+            });
+            let Ok(outcome) = outcome else {
                 return Err(fail(
                     Diag::new(op.id.clone(), Category::UnexpectedResponse)
                         .retryable(Retryable::Never)
@@ -647,18 +717,60 @@ impl ClientCore {
 
         let method = op.method;
         crate::verify::check_poll_deadline(&op.id)?;
-        let plan = match resolve_auth(&self.inner.api, op, &self.inner.auth, method, self).await {
+        let auth_target = url_override.unwrap_or(self.inner.base_url.as_deref().unwrap_or(""));
+        let credential_error = insecure_http(auth_target, self.inner.allow_insecure_http)
+            .then_some(INSECURE_HTTP_AUTH);
+        let span = crate::telemetry::current();
+        let authenticating = crate::telemetry::Pending::new(
+            span.as_ref(),
+            crate::telemetry::PendingKind::Phase(crate::TelemetryPhase::Auth, None),
+        );
+        let plan = match resolve_auth_transport(
+            &self.inner.api,
+            op,
+            &self.inner.auth,
+            method,
+            self,
+            credential_error,
+        )
+        .await
+        {
             AuthResolution::Ok {
                 plan,
                 secrets,
                 oauth,
-            } => (plan, secrets, oauth),
+            } => {
+                let start = authenticating.done();
+                if let Some(span) = &span {
+                    span.phase(crate::TelemetryPhase::Auth, start, None, false, None, None);
+                }
+                (plan, secrets, oauth)
+            }
             AuthResolution::Failed { remediation } => {
-                return Err(fail(
-                    Diag::new(op.id.clone(), Category::AuthFailed)
-                        .remediation(remediation)
-                        .build(),
-                ));
+                // A token wait cut short by the deadline reports that.
+                let failed = if crate::verify::call_deadline_expired() {
+                    crate::verify::deadline_exceeded(&op.id, "while authenticating")
+                } else if let Err(expired) = crate::verify::check_poll_deadline(&op.id) {
+                    expired
+                } else {
+                    fail(
+                        Diag::new(op.id.clone(), Category::AuthFailed)
+                            .remediation(remediation)
+                            .build(),
+                    )
+                };
+                let start = authenticating.done();
+                if let Some(span) = &span {
+                    span.phase(
+                        crate::TelemetryPhase::Auth,
+                        start,
+                        Some(&failed.diagnostic),
+                        false,
+                        None,
+                        None,
+                    );
+                }
+                return Err(failed);
             }
         };
         let (plan, auth_secrets, oauth) = plan;
@@ -691,11 +803,27 @@ impl ClientCore {
 
         let mut headers = HeaderBag::default();
         self.build_headers(op, &args, opts, &plan, &mut headers);
+        if insecure_http(&url, self.inner.allow_insecure_http)
+            && (!plan.headers.is_empty()
+                || !plan.cookies.is_empty()
+                || !plan.query.is_empty()
+                || headers.pairs().any(|(name, _)| {
+                    headers.is_secret(name) || credential_header(&self.inner.api, name, false)
+                }))
+        {
+            return Err(fail(
+                Diag::new(op.id.clone(), Category::AuthFailed)
+                    .remediation(INSECURE_HTTP_AUTH)
+                    .build(),
+            ));
+        }
 
         let params = arg_params(op);
         let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
         let body_paths = sensitive_body_paths(op);
-        let value = if is_safe_method(method) && method != HttpMethod::Options {
+        let value = if is_safe_method(method)
+            && !matches!(method, HttpMethod::Options | HttpMethod::Query)
+        {
             None
         } else {
             body_value(op, &args, &param_names)
@@ -727,15 +855,91 @@ impl ClientCore {
                 ));
             }
         };
+        let mut encoded = encoded;
+        let upload = crate::upload::active_for(&op.id);
+        if let Some(active) = &upload {
+            let path = Self::key_path(&active.arg);
+            if op.body.as_ref().map(|b| b.encoding) != Some(BodyEncoding::Bytes) {
+                return Err(self.validation(
+                    op,
+                    &path,
+                    Some(&Value::String("<upload>".to_owned())),
+                    "bytes: an UploadSource can only be the whole body of a binary request",
+                    format!("Pass {} as bytes: an UploadSource can only be the whole body of a binary request.", active.arg),
+                ));
+            }
+            let source = &active.source;
+            let keyed = matches!(
+                op.agent.idempotency.policy,
+                IdempotencyKind::Auto
+                    | IdempotencyKind::ContentHash
+                    | IdempotencyKind::ContentIdentity
+            );
+            let confirmed = matches!(op.agent.safety, Safety::Destructive | Safety::Irreversible);
+            if source.sha256().is_none() && (keyed || confirmed) {
+                return Err(self.validation(
+                    op,
+                    &path,
+                    Some(&Value::String("<upload>".to_owned())),
+                    "an UploadSource with a declared sha256",
+                    format!(
+                        "Declare the SHA-256 of the upload (UploadSource sha256) so the {} of {} binds to its bytes. Nothing was sent.",
+                        if keyed { "idempotency key" } else { "confirmation" },
+                        op.id
+                    ),
+                ));
+            }
+            let media_type = encoded.content_type.clone().unwrap_or_default();
+            let shown = Value::String(format!(
+                "<upload of {}{}>",
+                source
+                    .length()
+                    .map_or_else(|| "unknown length".to_owned(), |n| format!("{n} bytes")),
+                if media_type.is_empty() {
+                    String::new()
+                } else {
+                    format!(" of {media_type}")
+                }
+            ));
+            encoded = EncodedBody {
+                payload: Payload::Upload(source.clone()),
+                content_type: encoded.content_type,
+                display: shown.clone(),
+                raw: shown,
+                hash_material: None,
+            };
+            if let Some(length) = source.length() {
+                headers.set("Content-Length", length.to_string(), false);
+            }
+        }
         if let Some(content_type) = &encoded.content_type {
             headers.set("Content-Type", content_type.clone(), false);
         }
 
         let header = key_header(op);
         crate::verify::check_poll_deadline(&op.id)?;
-        let key = self
-            .idempotency_key(op, &args, opts, purpose, encoded.hash_material.as_deref())
-            .await?;
+        let declared = upload
+            .as_ref()
+            .filter(|_| op.agent.idempotency.policy == IdempotencyKind::ContentHash)
+            .map(|active| active.source.sha256().map(str::to_owned));
+        let reserve = async {
+            match declared {
+                Some(key) => Ok(key),
+                None => {
+                    self.idempotency_key(op, &args, opts, purpose, encoded.hash_material.as_deref())
+                        .await
+                }
+            }
+        };
+        // A store worker is not cancelled at the deadline, only no longer waited for.
+        let key = match crate::verify::call_deadline() {
+            Some(deadline) => tokio::time::timeout_at(deadline.into(), reserve)
+                .await
+                .map_err(|_| {
+                    crate::verify::deadline_exceeded(&op.id, "while reserving an idempotency key")
+                })??,
+            None => reserve.await?,
+        };
         if let Some(key) = &key {
             headers.set(&header, key.clone(), true);
             secrets.insert(key.clone());
@@ -754,6 +958,22 @@ impl ClientCore {
             && let PreviewMode::Header { header, value } = &op.agent.preview
         {
             headers.set(header, value.clone(), false);
+        }
+
+        if insecure_http(&url, self.inner.allow_insecure_http)
+            && headers.pairs().any(|(name, value)| {
+                let preserved = key
+                    .as_deref()
+                    .is_some_and(|key| name.eq_ignore_ascii_case(&header) && value == key);
+                (headers.is_secret(name) && !preserved)
+                    || credential_header(&self.inner.api, name, preserved)
+            })
+        {
+            return Err(fail(
+                Diag::new(op.id.clone(), Category::AuthFailed)
+                    .remediation(INSECURE_HTTP_AUTH)
+                    .build(),
+            ));
         }
 
         for (name, value) in headers.to_map(false) {
@@ -1186,7 +1406,7 @@ impl ClientCore {
                             .build(),
                     )
                 };
-                let logical = sha256_hex(canonical_json(&Value::Object(args.clone())).as_bytes());
+                let logical = crate::confirm::digest_for(&op.id, &Value::Object(args.clone()));
                 static CAPACITY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
                 let permit = CAPACITY
                     .acquire()

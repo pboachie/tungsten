@@ -57,7 +57,23 @@ internal sealed class AuthResult
 /// </summary>
 public sealed partial class ClientCore
 {
-    internal static bool IsSafeMethod(string method) => method is "GET" or "HEAD" or "OPTIONS" or "TRACE";
+    private const string InsecureHttpAuth = "Refusing to send credentials over non-loopback HTTP. Use HTTPS, or set ClientOptions.AllowInsecureHttp = true for intentional insecure transport. Nothing was sent.";
+
+    private bool CredentialHeader(string name, bool preservedIdempotency = false) => (!preservedIdempotency && Util.LooksSensitive(name)) || name.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("Proxy-Authorization", StringComparison.OrdinalIgnoreCase) || name.Equals("Cookie", StringComparison.OrdinalIgnoreCase)
+        || api.Auth.Any(s => s.Kind == "api_key" && s.In == "header" && s.Wire.Equals(name, StringComparison.OrdinalIgnoreCase)
+            || s.Kind == "composite" && s.Parts.Any(p => p.Kind == "header" && string.IsNullOrEmpty(p.FromConfig) && string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)));
+
+    private bool InsecureHttp(string target)
+    {
+        if (allowInsecureHttp || !Uri.TryCreate(target, UriKind.Absolute, out var url) || url.Scheme != "http") return false;
+        var host = url.Host.Trim('[', ']').ToLowerInvariant();
+        if (host is "localhost" or "localhost.") return false;
+        if (!System.Net.IPAddress.TryParse(host, out var ip)) return true;
+        return ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
+            ? ip.GetAddressBytes()[0] != 127 : !ip.Equals(System.Net.IPAddress.IPv6Loopback);
+    }
+    internal static bool IsSafeMethod(string method) => method is "GET" or "HEAD" or "OPTIONS" or "TRACE" or "QUERY";
 
     private static string CompositeConfigKey(CompositePart p)
     {
@@ -347,7 +363,7 @@ public sealed partial class ClientCore
     }
 
     /// <summary>Resolves the credentials for an operation; a problem is the result's Failed remediation.</summary>
-    private async Task<AuthResult> ResolveAuthAsync(OperationDescriptor op, string method, CancellationToken ct)
+    private async Task<AuthResult> ResolveAuthAsync(OperationDescriptor op, string method, CancellationToken ct, string? credentialError = null)
     {
         if (op.Security.Count == 0)
         {
@@ -381,6 +397,7 @@ public sealed partial class ClientCore
             }
             if (missing.Count == 0)
             {
+                if (sats.Count > 0 && credentialError is not null) return new AuthResult { Failed = credentialError };
                 var result = new AuthResult();
                 foreach (var (_, sat) in sats)
                 {

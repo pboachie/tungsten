@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Throwing ergonomics for people (planning/05: "a throwing client variant
- * is exposed for human ergonomics, implemented in the runtime"). Agents
- * should keep branching on `Result.ok`.
+ * Exception-based access to result-returning clients.
+ *
+ * Use {@link unwrap} for one result or {@link throwing} for a client view.
+ * Inspect {@link TungstenError.partial} before retrying a failed mutation or
+ * macro: it may contain an effect or a value that cannot be recovered later.
  */
 import type { Diagnostic, Result } from "./types.js";
 import { isRecord } from "./util.js";

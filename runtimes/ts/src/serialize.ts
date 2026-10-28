@@ -4,7 +4,9 @@
  * header and cookie parameters) and request body encoding.
  */
 import type { BodyDescriptor, OperationDescriptor, ParamDescriptor } from "./types.js";
+import { UploadSource } from "./upload.js";
 import { binarySize, canonicalJson, isBinary, isBlob, isNamedBinary, isRecord, REDACTED, utf8 } from "./util.js";
+import { isJsonMedia } from "./classify.js";
 
 /** Problem found while serializing an argument; becomes VALIDATION_FAILED. */
 export class SerializationError extends Error {
@@ -105,8 +107,34 @@ export function serializeHeaderParam(p: ParamDescriptor, value: unknown): string
   return scalar(value);
 }
 
-/** `name=value` for one cookie parameter (`form` style, values encoded). */
+/** RFC 6265 `cookie-octet`s. */
+const COOKIE_OCTET = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]$/;
+
+/** A `cookie` style value as written; only characters a cookie cannot carry are percent-encoded. */
+function cookieText(text: string): string {
+  let out = "";
+  for (const ch of text) out += COOKIE_OCTET.test(ch) ? ch : enc(ch);
+  return out;
+}
+
+/** OpenAPI 3.2 `cookie` style: `n=v`, `n=v1,v2` or exploded `n=v1; n=v2` and `k=v; k2=v2`. */
+function serializeCookieStyle(p: ParamDescriptor, value: unknown): string {
+  if (Array.isArray(value)) {
+    const items = value.filter(present).map((v) => cookieText(scalar(v)));
+    if (p.explode && items.length > 0) return items.map((i) => `${p.wire}=${i}`).join("; ");
+    return `${p.wire}=${items.join(",")}`;
+  }
+  if (isRecord(value) && !(value instanceof Date)) {
+    const pairs = entries(value).map(([k, v]) => [cookieText(k), cookieText(scalar(v))] as const);
+    if (p.explode && pairs.length > 0) return pairs.map(([k, v]) => `${k}=${v}`).join("; ");
+    return `${p.wire}=${pairs.flat().join(",")}`;
+  }
+  return `${p.wire}=${cookieText(scalar(value))}`;
+}
+
+/** `name=value` for one cookie parameter (`form` style, values encoded; or `cookie` style). */
 export function serializeCookieParam(p: ParamDescriptor, value: unknown): string {
+  if (p.style === "cookie") return serializeCookieStyle(p, value);
   if (Array.isArray(value)) return `${p.wire}=${value.filter(present).map((v) => enc(scalar(v))).join(",")}`;
   if (isRecord(value) && !(value instanceof Date)) {
     return `${p.wire}=${entries(value)
@@ -128,6 +156,20 @@ export interface EncodedBody {
   raw: unknown;
   /** Bytes or text whose SHA-256 is the `content_hash` key. */
   hashMaterial: string | Uint8Array | null;
+  /** A streamed body: `body` is then null and each attempt reads the source. */
+  upload?: UploadSource;
+}
+
+/** The path of an {@link UploadSource} inside `value`, or null. */
+function uploadPath(value: unknown, path: string, seen = new Set<object>()): string | null {
+  if (value instanceof UploadSource) return path;
+  if (value === null || typeof value !== "object" || isBinary(value) || value instanceof Date || seen.has(value)) return null;
+  seen.add(value);
+  for (const [k, v] of Object.entries(value)) {
+    const found = uploadPath(v, Array.isArray(value) ? `${path}[${k}]` : `${path}.${k}`, seen);
+    if (found !== null) return found;
+  }
+  return null;
 }
 
 const NO_BODY: EncodedBody = { body: null, contentType: null, display: null, raw: null, hashMaterial: null };
@@ -191,6 +233,34 @@ function binaryDisplay(value: Uint8Array | ArrayBuffer | Blob, mediaType: string
   return `<${binarySize(value)} bytes${mediaType ? ` of ${mediaType}` : ""}>`;
 }
 
+/** One multipart part before it is written: a file (with `filename`), a
+ * typed text part (a Blob without one) or a plain text field. */
+interface FormPart {
+  name: string;
+  value: Blob | string;
+  filename?: string;
+  headers: ReadonlyArray<{ name: string; value: string }>;
+}
+
+function quotePart(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+}
+
+/** A multipart/form-data body with each part's declared headers. */
+function multipartBlob(parts: FormPart[], boundary: string): Blob {
+  const chunks: BlobPart[] = [];
+  for (const part of parts) {
+    let head = `--${boundary}\r\nContent-Disposition: form-data; name="${quotePart(part.name)}"`;
+    if (part.filename !== undefined) head += `; filename="${quotePart(part.filename)}"`;
+    head += "\r\n";
+    if (typeof part.value !== "string") head += `Content-Type: ${part.value.type || "application/octet-stream"}\r\n`;
+    for (const header of part.headers) head += `${header.name}: ${header.value}\r\n`;
+    chunks.push(`${head}\r\n`, part.value, "\r\n");
+  }
+  chunks.push(`--${boundary}--\r\n`);
+  return new Blob(chunks);
+}
+
 /** Encode `value` per the body descriptor. Throws `SerializationError` for
  * values the encoding cannot carry. */
 export async function encodeBody(
@@ -202,6 +272,10 @@ export async function encodeBody(
   const encoding = descriptor?.encoding ?? "json";
   const mediaType = descriptor?.mediaType ?? "application/json";
   const parameter = "body";
+  const nested = encoding === "bytes" && value instanceof UploadSource ? null : uploadPath(value, parameter);
+  if (nested !== null) {
+    throw new SerializationError(nested, "bytes, a Blob or a File: an UploadSource can only be the whole body of a binary request", "<upload>");
+  }
   switch (encoding) {
     case "json": {
       let text: string | undefined;
@@ -234,34 +308,58 @@ export async function encodeBody(
     }
     case "multipart": {
       if (!isRecord(value)) throw new SerializationError(parameter, "an object of multipart fields", value);
-      const form = new FormData();
+      const parts: FormPart[] = [];
       const display: Record<string, unknown> = Object.create(null);
       for (const [k, v] of entries(value)) {
         const items = Array.isArray(v) ? v.filter(present) : [v];
         const shown: unknown[] = [];
+        const declaredPart = descriptor?.parts?.find((part) => part.name === k);
+        const declared = declaredPart?.contentType;
+        const declaredJson = declared !== undefined && isJsonMedia(declared.split(";")[0]!.trim().toLowerCase());
+        const headers = declaredPart?.headers ?? [];
         for (const item of items) {
           if (isBinary(item) || isNamedBinary(item)) {
             const { data, filename, contentType } = isNamedBinary(item) ? item : { data: item, filename: undefined, contentType: undefined };
             if (contentType !== undefined && contentType !== "" && !validMediaType(contentType)) {
               throw new SerializationError(`${parameter}.${k}`, "a media type such as type/subtype or type/subtype; charset=utf-8", "<invalid media type>");
             }
-            const blob = toBlob(data, contentType ?? "");
+            const own = contentType !== undefined && contentType !== "" ? contentType : isBlob(data) && data.type !== "" ? data.type : undefined;
+            const blob = toBlob(data, own ?? declared ?? "");
             const name = filename ?? (typeof File !== "undefined" && data instanceof File ? data.name : k);
-            form.append(k, blob, name);
+            parts.push({ name: k, value: blob, filename: name, headers });
             shown.push(binaryDisplay(data, blob.type));
           } else if (isRecord(item) && !(item instanceof Date)) {
-            form.append(k, new Blob([JSON.stringify(item)], { type: "application/json" }));
+            parts.push({ name: k, value: new Blob([JSON.stringify(item)], { type: declaredJson ? declared : "application/json" }), headers });
             shown.push(item);
+          } else if (declared !== undefined) {
+            parts.push({ name: k, value: new Blob([declaredJson ? JSON.stringify(item) : scalar(item)], { type: declared }), headers });
+            shown.push(scalar(item));
           } else {
-            form.append(k, scalar(item));
+            parts.push({ name: k, value: scalar(item), headers });
             shown.push(scalar(item));
           }
         }
         display[k] = Array.isArray(v) ? shown : shown[0];
       }
-      return { body: form, contentType: null, display: redactDisplay(display), raw: display, hashMaterial: canonicalJson(value) };
+      const hashMaterial = canonicalJson(value);
+      if (parts.some((part) => part.headers.length > 0)) {
+        // FormData cannot carry part headers: write the body.
+        const boundary = `tungsten-${Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, "0")).join("")}`;
+        return { body: multipartBlob(parts, boundary), contentType: `multipart/form-data; boundary=${boundary}`, display: redactDisplay(display), raw: display, hashMaterial };
+      }
+      const form = new FormData();
+      for (const part of parts) {
+        if (typeof part.value === "string") form.append(part.name, part.value);
+        else if (part.filename !== undefined) form.append(part.name, part.value, part.filename);
+        else form.append(part.name, part.value);
+      }
+      return { body: form, contentType: null, display: redactDisplay(display), raw: display, hashMaterial };
     }
     case "bytes": {
+      if (value instanceof UploadSource) {
+        const shown = `<upload of ${value.length === null ? "unknown length" : `${value.length} bytes`}${mediaType ? ` of ${mediaType}` : ""}>`;
+        return { body: null, contentType: mediaType, display: shown, raw: shown, hashMaterial: null, upload: value };
+      }
       let bytes: Uint8Array | Blob;
       if (value instanceof Uint8Array) bytes = value;
       else if (value instanceof ArrayBuffer) bytes = new Uint8Array(value);

@@ -24,7 +24,11 @@ pub(crate) fn client_paths(plan: &Plan<'_>) -> Vec<Vec<String>> {
                     p.push(m.name.clone());
                     walk(plan, c, &p, out);
                 }
-                MemberKind::Preview(_) | MemberKind::Pages(_) | MemberKind::Stream(_) => {}
+                MemberKind::Preview(_)
+                | MemberKind::Pages(_)
+                | MemberKind::Stream(_)
+                | MemberKind::Download(_)
+                | MemberKind::Upload(_) => {}
             }
         }
     }

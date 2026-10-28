@@ -38,15 +38,18 @@ pub(crate) fn method_word(method: HttpMethod) -> &'static str {
         HttpMethod::Head => "head",
         HttpMethod::Patch => "patch",
         HttpMethod::Trace => "trace",
+        HttpMethod::Query => "query",
+        HttpMethod::Custom => "custom",
     }
 }
 
-/// An operation id for an operation without `operationId`: the method,
+/// An operation id for an operation without `operationId`: the method
+/// (as written for a custom method),
 /// then the words of every literal segment, then `by` and the words of
 /// every path parameter, camelCased (`GET /v1/pets/{pet_id}` →
 /// `getV1PetsByPetId`).
-pub(crate) fn synthesize_operation_id(method: HttpMethod, path: &str) -> String {
-    let mut words = vec![method_word(method).to_string()];
+pub(crate) fn synthesize_operation_id(method: &str, path: &str) -> String {
+    let mut words = naming::split_words(&method.to_ascii_lowercase());
     for segment in path.split('/').filter(|s| !s.is_empty()) {
         match segment.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
             Some(param) => {

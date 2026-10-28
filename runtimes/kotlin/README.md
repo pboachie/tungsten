@@ -24,18 +24,142 @@ Calls return a typed result or a diagnostic envelope describing recovery;
 unknown outcomes never justify blindly repeating a mutation. The API remains
 responsible for authorization and server-side idempotency.
 
+## Coroutines (opt-in)
+
+The default surface is blocking and has no dependency beyond the Java runtime
+and kotlin-stdlib. Coroutine support is a separate artifact,
+`io.github.pboachie.tungsten:tungsten-runtime-kotlin-coroutines`
+(`runtimes/kotlin/coroutines`, the only one that depends on
+`kotlinx-coroutines-core`, pinned to 1.10.2). Generated SDKs use it when the
+Kotlin target sets `coroutines: true`; build it from source like this layer:
+
+```sh
+gradle -p runtimes/kotlin/coroutines publishToMavenLocal --no-daemon
+```
+
+- `suspending { call }` runs one blocking runtime call as a cancellable suspend
+  call on `Dispatchers.IO` (or the dispatcher you pass) and returns its
+  `Result`. Cancelling the coroutine interrupts the call; the Java runtime
+  answers by closing the connection of the in-flight request, and the call ends
+  with a `CancellationException`. A mutation cancelled after it was sent has an
+  unknown outcome: reuse its idempotency key.
+- `pagesFlow { pages }` and `eventsFlow { stream }` are cold `Flow`s of the
+  runtime's page and event results; the lambda runs once per collection. They
+  are pull based with no buffer of their own: the next page or event is read
+  only when the collector takes the previous one, so `maxResponseBytes` and
+  cycle detection apply per page unchanged, an error is the last element and
+  `.buffer(n)` bounds any prefetch. The stream is cancelled and closed when the
+  flow ends or is cancelled. `itemsOrThrow()` and `valuesOrThrow()` flatten them.
+
+Not covered: calls made through `dispatch()`, macros, previews and the OAuth
+helpers remain blocking; the Java runtime still uses one platform thread per
+in-flight request. A coroutine `withTimeout` cancels (`CancellationException`);
+for a `Result` with code `DEADLINE_EXCEEDED` instead, set the runtime's total
+deadline, which also bounds a whole pagination (see Limits).
+
+## Opening authorization URLs safely
+
+OAuth helpers return URL data and never launch a browser. Follow the
+[java runtime's safe URL integration guidance](../java/README.md#opening-authorization-urls-safely):
+validate for the application, use a literal-data browser API, and never interpolate
+URLs into shell source or use an unsafe opener or shell fallback. HTTP(S) scheme
+validation alone does not prevent command injection, including on Windows/WSL.
+Compatibility helpers retain application-owned custom-scheme policy.
+
 ## Limits
 
-This is a thin Kotlin layer over the Java runtime. Calls are synchronous;
+Multipart bodies: a field whose OpenAPI `encoding` entry declares a
+`contentType` is sent with that media type (the first entry without
+wildcards); a file part's own media type wins. The entry's `headers` are not
+sent (the TypeScript, Python and Rust runtimes send those with a fixed
+value), and neither is positional or nested multipart encoding. Unreleased
+0.2.0 only.
+
+The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
+not run by the client: configure the scheme with an access token obtained
+through it.
+
+A tagged union with an OpenAPI 3.2 discriminator `defaultMapping` decodes an
+object whose tag is missing, not a string or claimed by no other variant as the
+default variant; its own field types then apply. Without `defaultMapping`
+such an object is refused. A value that is not an object is always refused.
+
+This is a thin Kotlin layer over the Java runtime. Calls are synchronous (the
+coroutines artifact above wraps them);
 Java's lack of async calls, proxy configuration and pluggable transport also
-applies. For durable automatic keys, configure Java's `FileIdempotencyStore`
-through the shared client options; see the
-[Java store and lease limits](../java/README.md#durable-automatic-keys).
+applies. Transport, retries, validation and diagnostics are the Java runtime's.
+
+- **Response size.** Ordinary buffered responses default to 4 MiB per response.
+  Set the Java `ClientOptions.Builder.maxResponseBytes` (or the call option of
+  the same name) to change it; overflow returns `UNEXPECTED_RESPONSE`, code
+  `RESPONSE_TOO_LARGE`. See the
+  [Java limits](../java/README.md#limits) for the exact rules.
+- **Total deadline.** In unreleased 0.2.0, `deadline(...)` on the client or
+  call options builder bounds one logical call (a whole traversal, poll or
+  macro) across authentication, retries and verification; expiry gives
+  `DEADLINE_EXCEEDED`, and a mutation already sent `OUTCOME_UNKNOWN`. Pass a
+  `java.time.Duration`, or a `kotlin.time.Duration` through the extension
+  `io.github.pboachie.tungsten.runtime.kotlin.deadline`. The rules, including
+  what blocking work is only checked when it returns, are the
+  [Java runtime's](../java/README.md#limits).
+- **Strings.** `min_length` and `max_length` count Unicode code points, and a
+  `pattern` is a `java.util.regex` expression; a pattern Java cannot check is
+  accepted and reported as `PATTERN_UNCHECKED`. Both come from the Java runtime.
+- **Platform.** JVM only, Java 17 bytecode; there is no Kotlin/Native
+  or Kotlin/JS target. The build pins the Kotlin compiler in
+  `build.gradle.kts`.
+- **Idempotency.** For durable automatic keys, configure Java's
+  `FileIdempotencyStore` through the shared client options; see the
+  [Java store and lease limits](../java/README.md#durable-automatic-keys).
+- **Schema features without a Kotlin type.** The compiler warns (TG1031) and the
+  SDK types an `allOf` that cannot be merged, or an enum that mixes JSON types,
+  as the runtime's JSON value. A by-status success body is also the JSON value
+  (TG1034, informational). OpenID Connect is sent as a bearer token without
+  discovery (TG1033). A macro outside the canonical form is left out (TG1032),
+  and a discriminated union with a variant that has no tag value tries its
+  variants in order (TG1035).
+- **No CLI or MCP.** The Kotlin target emits neither; the `mcp` target is
+  separate.
 
 No runtime ships a file-backed OAuth token store. Provide an application-owned
 token-store implementation when tokens must survive process restarts; protect
-stored credentials and avoid logging them. Registry publication and package
-availability are separate from building this source checkout.
+stored credentials and avoid logging them.
+
+Availability: neither `tungsten-runtime-kotlin` nor
+`tungsten-runtime-kotlin-coroutines` is published to a registry. Build them from
+source as described above; only the Java runtime they depend on is on Maven
+Central.
+
+## Managed browser OAuth
+
+Kotlin delegates OAuth to the synchronous Java core; see the Java runtime's
+managed OAuth contract for bounds, ownership, deadlines and custom-store rules.
+The Java 17 bytecode target is unchanged. `KotlinRuntime.options(...)` preserves
+the managed token-response byte override while selecting Kotlin identity.
+
+```kotlin
+val oauth = client.oauth("code")
+val attempt = oauth.authorizationUrl(OAuthFlow.AuthorizationParams.builder()
+    .sessionBinding(owningListenerBinding)
+    .s256Supported(true) // qualify provider S256 support first
+    .issuerDefense(OAuthFlow.IssuerDefense.issuerResponse("https://issuer.example"))
+    .build()).getOrThrow()
+// Keep the handle with this listener; open attempt.url() in the browser.
+val result = oauth.exchangeCode(OAuthFlow.ExchangeParams(
+    attempt.attemptHandle(), fullCallbackUrl, owningListenerBinding))
+```
+
+Use an issuer-exclusive qualified redirect/listener only through the explicit
+`IssuerDefense.distinctRedirect(...)` alternative. Managed completion requires
+the handle, full callback URL and owning binding; it generates S256/state itself
+and consumes an accepted exchange once. Cancellation and logout fence pending
+work, with admission retained until physical work settles. `TokenStore.Memory`
+is capable; custom managed stores must implement the Java `TokenStore.Fenced`
+final serialized predicate contract. Direct writes and explicit
+`lowLevelAuthorizationUrl(...)` / `lowLevelExchangeCode(...)` calls bypass
+managed session guarantees and require application-owned security controls.
+These runtime delegation rules do not by themselves qualify generated packages,
+shared persistent stores or registry publication.
 
 ## License
 

@@ -228,8 +228,69 @@ final class Serialize {
         return scalar(v);
     }
 
-    /** name=value of a cookie parameter. */
+    /** Whether {@code c} is an RFC 6265 cookie-octet. */
+    private static boolean cookieOctet(int c) {
+        return c == 0x21 || (c >= 0x23 && c <= 0x2B) || (c >= 0x2D && c <= 0x3A)
+                || (c >= 0x3C && c <= 0x5B) || (c >= 0x5D && c <= 0x7E);
+    }
+
+    /** A cookie style value as written; only characters a cookie cannot carry are percent-encoded. */
+    private static String cookieText(String text) {
+        StringBuilder out = new StringBuilder();
+        text.codePoints().forEach(c -> {
+            if (cookieOctet(c)) {
+                out.appendCodePoint(c);
+            } else {
+                out.append(Text.encodeComponent(new String(Character.toChars(c))));
+            }
+        });
+        return out.toString();
+    }
+
+    /** OpenAPI 3.2 cookie style: n=v, n=v1,v2 or exploded n=v1; n=v2 and k=v; k2=v2. */
+    private static String cookieStyle(OperationDescriptor.Param p, Object v) {
+        if (v instanceof List<?>) {
+            List<String> items = new ArrayList<>();
+            for (Object item : (List<?>) v) {
+                if (item != null) {
+                    items.add(cookieText(scalar(item)));
+                }
+            }
+            if (p.explode() && !items.isEmpty()) {
+                List<String> parts = new ArrayList<>();
+                for (String item : items) {
+                    parts.add(p.wire() + "=" + item);
+                }
+                return String.join("; ", parts);
+            }
+            return p.wire() + "=" + String.join(",", items);
+        }
+        if (v instanceof JsonObject) {
+            JsonObject o = (JsonObject) v;
+            List<Pair> pairs = new ArrayList<>();
+            for (String k : o.keys()) {
+                Object item = o.get(k);
+                if (item != null) {
+                    pairs.add(new Pair(cookieText(k), cookieText(scalar(item))));
+                }
+            }
+            if (p.explode() && !pairs.isEmpty()) {
+                List<String> parts = new ArrayList<>();
+                for (Pair kv : pairs) {
+                    parts.add(kv.k() + "=" + kv.v());
+                }
+                return String.join("; ", parts);
+            }
+            return p.wire() + "=" + String.join(",", flat(pairs));
+        }
+        return p.wire() + "=" + cookieText(scalar(v));
+    }
+
+    /** name=value of a cookie parameter (form style, values encoded; or cookie style). */
     static String cookieParam(OperationDescriptor.Param p, Object v) {
+        if ("cookie".equals(p.style())) {
+            return cookieStyle(p, v);
+        }
         if (v instanceof List<?>) {
             return p.wire() + "=" + String.join(",", encodedItems((List<?>) v));
         }
@@ -390,19 +451,28 @@ final class Serialize {
                         list.add(item);
                     }
                     List<Object> shown = new ArrayList<>();
+                    String declared = d.partContentTypes().get(k);
+                    boolean declaredJson = declared != null && Classify.isJsonMedia(
+                            declared.split(";", 2)[0].trim().toLowerCase(java.util.Locale.ROOT));
                     for (Object x : list) {
                         Binary bin = Binary.of(x);
                         if (bin != null) {
                             if (bin.contentType() != null && !Text.validMediaType(bin.contentType())) {
                                 throw new Problem("body", "multipart file content types that are valid media types", v);
                             }
-                            shown.add(binaryDisplay(bin.length(), bin.contentType()));
+                            String own = bin.contentType() != null ? bin.contentType() : declared;
+                            shown.add(binaryDisplay(bin.length(), own));
                             parts.add(new Part(k, "file", null, bin.data(),
                                     bin.filename() != null ? bin.filename() : k,
-                                    bin.contentType() != null ? bin.contentType() : "application/octet-stream"));
+                                    own != null ? own : "application/octet-stream"));
                         } else if (x instanceof JsonObject) {
-                            parts.add(new Part(k, "json", Json.write(x), null, null, null));
+                            parts.add(new Part(k, "json", Json.write(x), null, null,
+                                    declaredJson ? declared : "application/json"));
                             shown.add(x);
+                        } else if (declared != null) {
+                            parts.add(new Part(k, "typed", declaredJson ? Json.write(x) : scalar(x), null, null,
+                                    declared));
+                            shown.add(scalar(x));
                         } else {
                             parts.add(new Part(k, "text", scalar(x), null, null, null));
                             shown.add(scalar(x));
@@ -465,8 +535,9 @@ final class Serialize {
                     head.append("Content-Type: ").append(p.contentType()).append("\r\n");
                     break;
                 case "json":
+                case "typed":
                     head.append("Content-Disposition: form-data; name=\"").append(escapeQuotes(p.name())).append("\"\r\n");
-                    head.append("Content-Type: application/json\r\n");
+                    head.append("Content-Type: ").append(p.contentType()).append("\r\n");
                     break;
                 default:
                     head.append("Content-Disposition: form-data; name=\"").append(escapeQuotes(p.name())).append("\"\r\n");

@@ -13,6 +13,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const output = resolve(process.argv[2] ?? mkdtempSync(join(tmpdir(), "tungsten-runtime-dist-")));
 const packages = ["ts", "mcp", "webmcp"];
 const names = ["@elysra/tungsten-runtime", "@elysra/tungsten-mcp", "@elysra/tungsten-webmcp"];
+// The MCP adapter's floor follows its node:module import graph.
+const nodeFloors = [">=22", "^22.13.0 || >=23.2.0", ">=22"];
 const workspaceVersion = readFileSync(join(root, "Cargo.toml"), "utf8").match(/^version = "([^"]+)"/m)?.[1];
 assert(workspaceVersion, "workspace version is required");
 mkdirSync(output, { recursive: true });
@@ -49,7 +51,7 @@ try {
     assert.equal(manifest.name, names[i]);
     assert.equal(manifest.version, workspaceVersion, `${manifest.name}: workspace version mismatch`);
     assert.equal(manifest.license, "Apache-2.0");
-    assert.equal(manifest.engines?.node, ">=22", `${manifest.name}: Node.js support floor`);
+    assert.equal(manifest.engines?.node, nodeFloors[i], `${manifest.name}: Node.js support floor`);
     assert.equal(manifest.homepage, "https://github.com/pboachie/tungsten");
     assert.equal(manifest.bugs?.url, "https://github.com/pboachie/tungsten/issues");
     assert.equal(manifest.author, "Prince Boachie");
@@ -85,12 +87,18 @@ try {
     assert(!lstatSync(installed).isSymbolicLink(), `${name}: consumer must install an archive, not a source link`);
     assert(realpathSync(installed).startsWith(consumer), `${name}: source tree leak`);
   }
+  // The advisory legacy canary (below every declared floor) checks the SDK
+  // runtime and WebMCP imports only: the MCP root import needs Node's
+  // module.stripTypeScriptTypes (22.13/23.2), a known, documented blocker.
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  const mcp = major > 23 || (major === 23 && minor >= 2) || (major === 22 && minor >= 13);
+  if (!mcp) console.log(`Node ${process.versions.node} is below the MCP floor; skipping the @elysra/tungsten-mcp import`);
   writeFileSync(join(consumer, "smoke.mjs"), `
     import assert from "node:assert/strict";
     import { ClientCore, RUNTIME_VERSION } from "@elysra/tungsten-runtime";
     import * as nodeAdapter from "@elysra/tungsten-runtime/node";
-    import { createTungstenMcpServer } from "@elysra/tungsten-mcp";
     import { registerTungstenWebMcp, detectWebMcpBackend } from "@elysra/tungsten-webmcp";
+    ${mcp ? 'const { createTungstenMcpServer } = await import("@elysra/tungsten-mcp");' : "const createTungstenMcpServer = () => {};"}
     assert.equal(RUNTIME_VERSION, ${JSON.stringify(workspaceVersion)});
     for (const value of [ClientCore, createTungstenMcpServer, registerTungstenWebMcp, detectWebMcpBackend]) assert.equal(typeof value, "function");
     assert(Object.keys(nodeAdapter).length > 0);

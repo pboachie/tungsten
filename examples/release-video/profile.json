@@ -1,0 +1,62 @@
+{
+  "profile_version": 1,
+  "release": "v0.1.2",
+  "source_commit": "1a0ee4def65440010f1810ee447285e6a936192d",
+  "archive_sha256": "bf91e47254ce7e0d7bad7f5521e48c33910db2a46797f2c6407656c79e9714b7",
+  "binary_sha256": "8bce6d2ac79deaa93b08ac203179e350d790e0b9a3eac21e7fcc9a9de376ef9d",
+  "sdk_targets": {
+    "typescript": "TypeScript",
+    "python": "Python",
+    "rust": "Rust",
+    "java": "Java",
+    "csharp": "C#",
+    "ruby": "Ruby",
+    "go": "Go (external emitter)"
+  },
+  "other_targets": {
+    "cli": "Rust command-line client, emitted with Rust SDK",
+    "mcp": "MCP server",
+    "webmcp": "Experimental browser WebMCP adapter",
+    "docs": "LLM-oriented documentation"
+  },
+  "inputs": [
+    "OpenAPI 3.0/3.1 JSON/YAML",
+    "Swagger 2.0",
+    "Postman Collection 2.1",
+    "saved cURL",
+    "HTTP request .http/.rest",
+    "HAR 1.2",
+    "endpoint manifest v1 + JSON Schema 2020-12",
+    "manual method/endpoint + optional JSON examples"
+  ],
+  "imported_targets": [
+    "typescript",
+    "python",
+    "rust",
+    "mcp",
+    "webmcp",
+    "docs"
+  ],
+  "imported_rejection_code": "TG0702",
+  "native_git_input": false,
+  "native_http_input": false,
+  "remote_references": false,
+  "npm_runtime": "0.1.2",
+  "unreleased_in_this_version": [
+    "Kotlin SDK",
+    "F# SDK",
+    "Dart SDK",
+    "native Git/HTTP acquisition"
+  ],
+  "publication": "HUMAN_REVIEW_REQUIRED",
+  "public_fixture": {
+    "repository": "https://github.com/pboachie/zrotext.git",
+    "commit": "84bfeee59f57f7cbdac00f4fbe3f567d36c5e57c",
+    "contract": "protocol/v1/openapi/public-v1.json",
+    "sha256": "e3504d79ae6a818c32a1b4584ee97e3072ca84f0211b70161bbc5bc1f02ceaca",
+    "mcp_tool_count": 15,
+    "warning_codes": [
+      "TG0303"
+    ]
+  }
+}

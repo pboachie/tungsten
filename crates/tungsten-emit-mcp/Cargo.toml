@@ -23,11 +23,15 @@ testing = []
 
 [dependencies]
 tungsten-core.workspace = true
+tungsten-config.workspace = true
 tungsten-ir.workspace = true
 tungsten-emit.workspace = true
 # The server is built on the generated TypeScript SDK: its default package
 # name and the macros it emits.
 tungsten-emit-ts.workspace = true
+# The experimental `mcp-python` server is built on the generated Python SDK:
+# its default names, client class and the macros it emits.
+tungsten-emit-py.workspace = true
 tungsten-tokens.workspace = true
 serde.workspace = true
 serde_json.workspace = true

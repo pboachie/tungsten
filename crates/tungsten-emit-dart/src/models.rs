@@ -10,16 +10,20 @@
 //!   nullable `Patch<T>` (absent, null or a value). Members the schema does
 //!   not declare are kept in `additionalProperties` unless the record is
 //!   closed. Equality and `hashCode` compare the JSON forms.
-//! - A string or integer enum is an enhanced enum with its wire value
-//!   (`wire`); decoding refuses a value outside the enum.
+//! - An enum is an enhanced enum with its wire value (`wire`; `Object?` for
+//!   an enum of mixed JSON types, whose values are compared as JSON);
+//!   decoding refuses a value outside the enum.
+//! - An `allOf` that cannot be merged into one record is a `final class`
+//!   with one typed part per member: each part decodes the whole value, and
+//!   `toJson()` merges the parts' JSON.
 //! - A union is a sealed class with one final subclass per variant
 //!   (`<Union><Variant>`, holding `value`): decoded by the tag of a
 //!   discriminated union, by the value check of a literal-tagged one, else
 //!   by the first variant (in plan order) that decodes.
-//! - Any other named type (an alias, an `allOf` that cannot be merged, an
-//!   enum of mixed JSON types, a union without variants) has no class:
-//!   references use the Dart type of its shape, or the JSON value
-//!   (`Object?`).
+//! - Any other named type (an alias, an `allOf` without members, an enum
+//!   without values or with an integer beyond 64 bits, a union without
+//!   variants) has no class: references use the Dart type of its shape, or
+//!   the JSON value (`Object?`).
 //!
 //! Decoding failures are `FormatException`s whose message starts with the
 //! JSON path of the value (`$.tags[2].name: expected a string`).
@@ -27,12 +31,13 @@
 use std::collections::BTreeSet;
 
 use tungsten_emit::sdk::{AllOfPlan, EnumPlan, LiteralKey, TypeKind, UnionPlan};
+use tungsten_ir::naming::{self, Role, Target};
 use tungsten_ir::{
-    Additional, EnumValue, Field, NamedType, Presence, Primitive, Shape, StringFormat, TypeId,
-    TypeRef,
+    Additional, EnumValue, Field, Ident, NamedType, Presence, Primitive, Shape, StringFormat,
+    TypeId, TypeRef,
 };
 
-use crate::dart::{Code, Expr, contains_word, directive, json_lit, str_lit};
+use crate::dart::{Code, Expr, const_lit, contains_word, directive, json_lit, str_lit};
 use crate::options::RUNTIME_PACKAGE;
 use crate::{Gen, Library};
 
@@ -74,9 +79,18 @@ impl Gen<'_, '_> {
         };
         match &t.kind {
             TypeKind::Record { .. } => true,
-            TypeKind::Enum(e) => matches!(e, EnumPlan::Strings | EnumPlan::Integers),
+            TypeKind::Enum(EnumPlan::Strings | EnumPlan::Integers) => true,
+            TypeKind::Enum(EnumPlan::Mixed { .. }) => matches!(
+                self.plan.ir.types.get(id).map(|t| &t.shape),
+                Some(Shape::Enum { values, .. }) if representable(values)
+            ),
+            TypeKind::Enum(_) => false,
             TypeKind::Union(u) => !matches!(u, UnionPlan::Empty),
-            TypeKind::AllOf(a) => matches!(a, AllOfPlan::Merged { .. }),
+            TypeKind::AllOf(AllOfPlan::Merged { .. }) => true,
+            TypeKind::AllOf(AllOfPlan::Intersection) => matches!(
+                self.plan.ir.types.get(id).map(|t| &t.shape),
+                Some(Shape::Intersection { members }) if !members.is_empty()
+            ),
             TypeKind::Alias => false,
         }
     }
@@ -239,6 +253,21 @@ impl Gen<'_, '_> {
             Some(e) => Expr::call("Wire.encode", vec![Expr::raw(value), e]),
         }
     }
+}
+
+/// Whether every value of an enum is a Dart constant that keeps its JSON
+/// value: a Dart `int` is 64 bits, so an integer beyond `i64` cannot be one
+/// (as a `double` it would be sent as another number).
+pub(crate) fn representable(values: &[EnumValue]) -> bool {
+    fn ok(v: &serde_json::Value) -> bool {
+        match v {
+            serde_json::Value::Number(n) => n.is_i64() || (!n.is_u64() && n.as_f64().is_some()),
+            serde_json::Value::Array(items) => items.iter().all(ok),
+            serde_json::Value::Object(members) => members.values().all(ok),
+            _ => true,
+        }
+    }
+    values.iter().all(|v| ok(&v.value))
 }
 
 /// The Dart representation of a primitive.
@@ -477,6 +506,9 @@ impl ModelFile<'_, '_, '_> {
                 let comps = self.comps(&t.id, &own);
                 let extra = if *closed { None } else { Some(Dt::Json) };
                 self.record(w, &name, &doc, &comps, extra.as_ref());
+            }
+            (TypeKind::AllOf(AllOfPlan::Intersection), Shape::Intersection { members }) => {
+                self.intersection(w, &name, &doc, members);
             }
             (TypeKind::Enum(e), Shape::Enum { values, .. }) => {
                 self.enumeration(w, t, &name, &doc, e, values);
@@ -764,6 +796,7 @@ impl ModelFile<'_, '_, '_> {
             .unwrap_or_default();
         let base = match plan {
             EnumPlan::Integers => "int",
+            EnumPlan::Mixed { .. } => "Object?",
             _ => "String",
         };
         w.doc(doc);
@@ -783,6 +816,7 @@ impl ModelFile<'_, '_, '_> {
             let vname = names.get(i).cloned().unwrap_or_else(|| format!("value{i}"));
             let lit = match plan {
                 EnumPlan::Integers => v.value.as_i64().unwrap_or(0).to_string(),
+                EnumPlan::Mixed { .. } => const_lit(&v.value),
                 _ => str_lit(v.value.as_str().unwrap_or("")),
             };
             w.expr(
@@ -802,12 +836,141 @@ impl ModelFile<'_, '_, '_> {
         ));
         factory_header(w, name);
         w.indent();
-        w.line("return Wire.enumValue(values, json, path);");
+        if matches!(plan, EnumPlan::Mixed { .. }) {
+            // The values are JSON values of different types: compared as
+            // JSON (`1` is `1.0`, arrays and objects by content).
+            w.line("for (final v in values) {");
+            w.indent();
+            w.line("if (Wire.same(v.wire, json)) {");
+            w.indent();
+            w.line("return v;");
+            w.dedent();
+            w.line("}");
+            w.dedent();
+            w.line("}");
+            let allowed: Vec<String> = values
+                .iter()
+                .map(|v| serde_json::to_string(&v.value).unwrap_or_default())
+                .collect();
+            failure(w, &format!("expected one of {}", allowed.join(", ")));
+        } else {
+            w.line("return Wire.enumValue(values, json, path);");
+        }
         w.dedent();
         w.line("}");
         w.blank();
         w.line("@override");
         w.line("Object? toJson() => wire;");
+        w.dedent();
+        w.line("}");
+    }
+
+    /// An `allOf` that cannot be merged into one record: a class with one
+    /// typed part per member. Every part decodes the whole value (a member
+    /// may be a union, a record with typed extra members or any other
+    /// type), and `toJson()` merges the parts' JSON values (objects member
+    /// by member).
+    fn intersection(&mut self, w: &mut Code, name: &str, doc: &str, members: &[TypeRef]) {
+        let g = self.g;
+        let from: Option<&str> = Some(self.ns);
+        self.declared.push(name.to_string());
+        let mut taken: Vec<String> = ["toJson", "hashCode", "runtimeType", "fromJson"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let parts: Vec<(String, Dt, String)> = members
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let (base, label) = match m {
+                    TypeRef::Named(id) if g.has_class(id) => (
+                        g.plan.types.get(id).map_or_else(String::new, |p| {
+                            naming::render(
+                                &Ident {
+                                    wire: p.words.join(" "),
+                                    words: p.words.clone(),
+                                },
+                                Target::Dart,
+                                Role::Field,
+                            )
+                        }),
+                        format!("The value as the member `{}`.", id.0),
+                    ),
+                    _ => (
+                        format!("part{}", i + 1),
+                        format!("The value as the member number {}.", i + 1),
+                    ),
+                };
+                let mut field = if base.is_empty() {
+                    format!("part{}", i + 1)
+                } else {
+                    base
+                };
+                while taken.contains(&field) {
+                    field.push('2');
+                }
+                taken.push(field.clone());
+                (field, g.dt(m), label)
+            })
+            .collect();
+        w.doc(doc);
+        w.class_header(&format!("final class {name}"), "implements JsonEncodable");
+        w.indent();
+        w.doc("Builds the value from its parts.");
+        w.line(format!("const {name}({{"));
+        w.indent();
+        for (field, _, _) in &parts {
+            w.line(format!("required this.{field},"));
+        }
+        w.dedent();
+        w.line("});");
+        w.blank();
+        w.doc(&format!(
+            "Decodes a `{name}`: each part decodes the whole JSON value. Throws a `FormatException` naming the JSON path of the first value that does not fit."
+        ));
+        factory_header(w, name);
+        w.indent();
+        w.line(format!("return {name}("));
+        w.indent();
+        for (field, dt, _) in &parts {
+            w.expr(
+                &format!("{field}: "),
+                &g.decode_value(dt, from, "json", "path"),
+                ",",
+            );
+        }
+        w.dedent();
+        w.line(");");
+        w.dedent();
+        w.line("}");
+        for (field, dt, label) in &parts {
+            w.blank();
+            w.doc(label);
+            field_line(w, &g.dart_type(dt, from), field);
+        }
+        w.blank();
+        w.doc("The JSON value: the parts' values, merged (objects member by member).");
+        w.line("@override");
+        w.line("Object? toJson() {");
+        w.indent();
+        w.line("return Wire.merge([");
+        w.indent();
+        for (field, dt, _) in &parts {
+            let value = if dt.nullable() {
+                match g.encoder(dt) {
+                    None => Expr::raw(field.clone()),
+                    Some(e) => Expr::call("Wire.encode", vec![Expr::raw(field.clone()), e]),
+                }
+            } else {
+                g.encode_value(dt, field)
+            };
+            w.expr("", &value, ",");
+        }
+        w.dedent();
+        w.line("]);");
+        w.dedent();
+        w.line("}");
+        equality(w, name);
         w.dedent();
         w.line("}");
     }
@@ -881,29 +1044,21 @@ impl ModelFile<'_, '_, '_> {
             )
         };
         match plan {
-            UnionPlan::Tagged { tag, variants } => {
-                w.line("final o = Wire.object(json, path);");
-                w.line(format!("switch (o[{}]) {{", str_lit(tag)));
-                w.indent();
-                let mut all: Vec<String> = vec![];
-                for (index, tags) in variants {
-                    if tags.is_empty() {
-                        continue;
-                    }
-                    for t in tags {
-                        w.line(format!("case {}:", str_lit(t)));
-                        all.push(format!("\"{t}\""));
-                    }
-                    w.indent();
+            UnionPlan::Tagged {
+                tag,
+                variants,
+                default,
+            } => {
+                let checked = variants
+                    .iter()
+                    .any(|(index, tags)| !tags.is_empty() && *default != Some(*index));
+                if let (Some(index), false) = (default, checked) {
+                    // Only the default variant is left: any object is it.
+                    w.line("Wire.object(json, path);");
                     w.expr("return ", &construct(*index), ";");
-                    w.dedent();
+                } else {
+                    tagged_switch(w, tag, variants, *default, &construct);
                 }
-                w.dedent();
-                w.line("}");
-                failure(
-                    w,
-                    &format!("member \"{tag}\" must be one of {}", all.join(", ")),
-                );
             }
             UnionPlan::LiteralTagged { variants } => {
                 let mut open = true;
@@ -993,7 +1148,7 @@ impl ModelFile<'_, '_, '_> {
 
 /// `factory <name>.fromJson(Object? json, [String path = r'$']) {`, split
 /// like `dart format` when it does not fit.
-fn factory_header(w: &mut Code, name: &str) {
+pub(crate) fn factory_header(w: &mut Code, name: &str) {
     let flat = format!("factory {name}.fromJson(Object? json, [String path = r'$']) {{");
     if w.fits(&flat) {
         w.line(flat);
@@ -1007,7 +1162,7 @@ fn factory_header(w: &mut Code, name: &str) {
 
 /// `const <name>(<param>);`, with the parameter on its own line and a
 /// trailing comma when it does not fit.
-fn one_param_ctor(w: &mut Code, name: &str, param: &str) {
+pub(crate) fn one_param_ctor(w: &mut Code, name: &str, param: &str) {
     let flat = format!("const {name}({param});");
     if w.fits(&flat) {
         w.line(flat);
@@ -1019,7 +1174,7 @@ fn one_param_ctor(w: &mut Code, name: &str, param: &str) {
 }
 
 /// `final <type> <name>;`, split before the name when it does not fit.
-fn field_line(w: &mut Code, ty: &str, name: &str) {
+pub(crate) fn field_line(w: &mut Code, ty: &str, name: &str) {
     let flat = format!("final {ty} {name};");
     if w.fits(&flat) {
         w.line(flat);
@@ -1030,7 +1185,7 @@ fn field_line(w: &mut Code, ty: &str, name: &str) {
 }
 
 /// `throw Wire.failure(path, '<message>');`.
-fn failure(w: &mut Code, message: &str) {
+pub(crate) fn failure(w: &mut Code, message: &str) {
     w.expr(
         "throw ",
         &Expr::call(
@@ -1042,7 +1197,7 @@ fn failure(w: &mut Code, message: &str) {
 }
 
 /// `==` and `hashCode` over the JSON form.
-fn equality(w: &mut Code, name: &str) {
+pub(crate) fn equality(w: &mut Code, name: &str) {
     w.blank();
     w.line("@override");
     w.line("bool operator ==(Object other) {");
@@ -1065,9 +1220,50 @@ fn wire(g: &Gen<'_, '_>) -> String {
     let mut out = String::new();
     out.push_str(&g.header);
     out.push_str("\n\n");
-    out.push_str(WIRE);
+    let merges =
+        g.plan.types.values().any(|t| {
+            matches!(t.kind, TypeKind::AllOf(AllOfPlan::Intersection)) && g.has_class(&t.id)
+        });
+    match WIRE.strip_suffix("}\n") {
+        Some(head) if merges => {
+            out.push_str(head);
+            out.push_str(WIRE_MERGE);
+            out.push_str("}\n");
+        }
+        _ => out.push_str(WIRE),
+    }
     out
 }
+
+/// The merge of the parts of an intersection (in `lib/src/wire.dart` only
+/// when the package has one).
+const WIRE_MERGE: &str = r#"
+  /// The JSON value of an intersection: the JSON values of its parts,
+  /// merged. Objects are merged member by member (recursively); of any
+  /// other values the first one that is not null is kept.
+  static Object? merge(List<Object?> parts) {
+    Object? merged;
+    for (final part in parts) {
+      merged = _merge(merged, part);
+    }
+    return merged;
+  }
+
+  static Object? _merge(Object? left, Object? right) {
+    if (left is Map<Object?, Object?> && right is Map<Object?, Object?>) {
+      final merged = <String, Object?>{
+        for (final e in left.entries) '${e.key}': e.value,
+      };
+      for (final e in right.entries) {
+        final key = '${e.key}';
+        merged[key] =
+            merged.containsKey(key) ? _merge(merged[key], e.value) : e.value;
+      }
+      return merged;
+    }
+    return left ?? right;
+  }
+"#;
 
 /// The decoders and encoders of the model classes (the same in every
 /// package).
@@ -1367,3 +1563,40 @@ abstract final class Wire {
   }
 }
 "#;
+
+/// The `switch` over a tagged union's discriminator member, then the
+/// default variant (OpenAPI 3.2 `defaultMapping`: an object whose tag is
+/// missing, not a string or claimed by no other variant) or a failure.
+fn tagged_switch(
+    w: &mut Code,
+    tag: &str,
+    variants: &[(usize, Vec<String>)],
+    default: Option<usize>,
+    construct: &dyn Fn(usize) -> Expr,
+) {
+    w.line("final o = Wire.object(json, path);");
+    w.line(format!("switch (o[{}]) {{", str_lit(tag)));
+    w.indent();
+    let mut all: Vec<String> = vec![];
+    for (index, tags) in variants {
+        if tags.is_empty() || default == Some(*index) {
+            continue;
+        }
+        for t in tags {
+            w.line(format!("case {}:", str_lit(t)));
+            all.push(format!("\"{t}\""));
+        }
+        w.indent();
+        w.expr("return ", &construct(*index), ";");
+        w.dedent();
+    }
+    w.dedent();
+    w.line("}");
+    match default {
+        Some(index) => w.expr("return ", &construct(index), ";"),
+        None => failure(
+            w,
+            &format!("member \"{tag}\" must be one of {}", all.join(", ")),
+        ),
+    }
+}

@@ -33,6 +33,7 @@
 
 pub mod diagnostic;
 pub mod digest;
+pub mod policy;
 pub mod source;
 
 pub use diagnostic::{Diagnostic, Diagnostics, Label, Severity};

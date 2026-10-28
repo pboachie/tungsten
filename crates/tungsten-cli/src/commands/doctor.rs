@@ -11,6 +11,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use tungsten_config::capabilities::ToolRequirement;
 use tungsten_emit::external::find_executable;
 
 use crate::args::DoctorArgs;
@@ -42,6 +43,44 @@ const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
+    let mut report = Report::new(CommandName::Doctor);
+    let project = args
+        .path
+        .as_deref()
+        .or_else(|| args.strict.then_some(Path::new(".")));
+    // Resolve and compose before any version subprocess. Invalid project or
+    // profile content must never cause discovered tools to execute.
+    let configured = if let Some(path) = project {
+        let manifest = match input::resolve(path) {
+            Ok(input::Input::Project(manifest)) => manifest,
+            _ => {
+                return report.failed(
+                    exit::FAILED,
+                    CliError::new(
+                        ErrorKind::Usage,
+                        "doctor requires a project directory or tungsten manifest",
+                    ),
+                );
+            }
+        };
+        let loaded = tungsten_build::driver::load_project_configuration(
+            &manifest,
+            &tungsten_build::CompileOptions::default(),
+        );
+        let parsed = loaded.parsed;
+        let Some(config) = parsed.config else {
+            report.diagnostics = parsed.diagnostics.0;
+            report.exit = exit::FAILED;
+            return report;
+        };
+        let transport = loaded
+            .effective
+            .map(|effective| effective.transport)
+            .unwrap_or_default();
+        Some((manifest, config, transport))
+    } else {
+        None
+    };
     let search_path = env
         .search_path
         .clone()
@@ -61,32 +100,9 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             }
         })
         .collect();
-    let mut report = Report::new(CommandName::Doctor);
-    let project = args
-        .path
-        .as_deref()
-        .or_else(|| args.strict.then_some(Path::new(".")));
     let mut failures = vec![];
-    if let Some(path) = project {
-        let manifest = match input::resolve(path) {
-            Ok(input::Input::Project(manifest)) => manifest,
-            _ => {
-                return report.failed(
-                    exit::FAILED,
-                    CliError::new(
-                        ErrorKind::Usage,
-                        "doctor requires a project directory or tungsten manifest",
-                    ),
-                );
-            }
-        };
-        let (config, diagnostics) = tungsten_config::load(&manifest);
-        if diagnostics.has_errors() || config.is_none() {
-            report.diagnostics = diagnostics.0;
-            report.exit = exit::FAILED;
-            return report;
-        }
-        let config = config.unwrap();
+    let mut transport_notes = vec![];
+    if let Some((manifest, config, transport)) = configured {
         let has = |name: &str| {
             config.targets.get(name).is_some_and(|options| {
                 tungsten_config::external_target(options)
@@ -135,43 +151,69 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
                 purpose: "Go SDK emitter".into(),
             });
         }
-        let python_minimum = config
-            .targets
-            .get("python")
-            .and_then(|options| options.get("python_version"))
-            .and_then(|value| value.as_str())
-            .filter(|version| matches!(*version, "3.10" | "3.11" | "3.12"))
-            .and_then(version_pair)
-            .unwrap_or((3, 12));
+        let mut requirements = Vec::new();
+        for (name, options) in &config.targets {
+            if has(name)
+                && let Some(target) = tungsten_config::capabilities::target(name)
+            {
+                for requirement in target.prerequisites {
+                    requirements.push(requirement.for_options(options));
+                }
+            }
+        }
+        // The conventional external Go emitter retains its existing special
+        // case; arbitrary external targets never inherit built-in requirements.
         for (name, required, minimum) in [
-            ("node", javascript, Some((22, 0))),
-            ("npm", javascript, None),
-            ("python3", has("python"), Some(python_minimum)),
-            ("cargo", has("rust"), Some((1, 88))),
-            ("rustc", has("rust"), Some((1, 88))),
-            ("java", has("java"), Some((17, 0))),
-            ("mvn", has("java"), None),
-            ("dotnet", has("csharp"), Some((10, 0))),
-            ("ruby", has("ruby"), Some((3, 3))),
-            ("bundle", has("ruby"), None),
-            ("go", go.is_some(), Some((1, 22))),
+            ("go", go.is_some(), Some([1, 22])),
             ("tungsten-emit-go", go_emitter, None),
         ] {
-            if !required {
-                continue;
+            if required {
+                requirements.push(ToolRequirement {
+                    tool: name,
+                    minimum,
+                    maximum_exclusive: None,
+                    minimum_option: None,
+                    excluded_versions: &[],
+                });
+            }
+        }
+        let requirements = match aggregate_requirements(requirements) {
+            Ok(requirements) => requirements,
+            Err(message) => {
+                report.exit = exit::FAILED;
+                report.human = format!("{message}\n");
+                report.error = Some(CliError::new(ErrorKind::Usage, message).with_help(
+                    "choose configured targets and options with overlapping tool requirements",
+                ));
+                return report;
+            }
+        };
+        for (name, prerequisite) in requirements {
+            if !tools.iter().any(|tool| tool.name == name) {
+                let exe = find_executable(name, &search_path);
+                tools.push(ToolReport {
+                    name: name.into(),
+                    found: exe.is_some(),
+                    version: exe
+                        .as_deref()
+                        .and_then(|exe| tool_version(exe, version_arg(name))),
+                    purpose: "configured target prerequisite".into(),
+                });
             }
             let tool = tools.iter_mut().find(|tool| tool.name == name).unwrap();
             let supported = tool.found
-                && minimum.is_none_or(|minimum| {
-                    tool.version
-                        .as_deref()
-                        .and_then(version_pair)
-                        .is_some_and(|v| v >= minimum)
-                });
-            let requirement = minimum.map_or_else(
-                || "installed".into(),
-                |(major, minor)| format!(">={major}.{minor}"),
-            );
+                && ((prerequisite.bounds.minimum.is_none()
+                    && prerequisite.bounds.maximum_exclusive.is_none()
+                    && prerequisite.excluded_versions.is_empty())
+                    || {
+                        tool.version
+                            .as_deref()
+                            .and_then(version_pair)
+                            .is_some_and(|(major, minor)| prerequisite.accepts([major, minor]))
+                    });
+            let requirement = prerequisite
+                .bounds
+                .description_with_exclusions(&prerequisite.excluded_versions);
             tool.purpose = format!(
                 "required {requirement} for configured targets; {}",
                 if supported {
@@ -207,8 +249,12 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
                 }
             }
         }
+        transport_notes = check_transport(&transport, base, &mut tools, &mut failures);
     }
     report.human = human(&tools);
+    for note in &transport_notes {
+        let _ = writeln!(report.human, "{note}");
+    }
     if project.is_some() {
         report.human = report.human.replace(
             "all tools are optional; a missing tool only disables what it is listed for\n",
@@ -222,7 +268,21 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
             );
         }
     }
-    report.result = Some(CommandResult::Doctor(DoctorResult { tools }));
+    if let Some(note) = tools
+        .iter()
+        .find(|tool| tool.name == "node")
+        .and_then(|tool| tool.version.as_deref())
+        .and_then(version_pair)
+        .and_then(|(major, _)| node_advisory(major))
+    {
+        let _ = writeln!(report.human, "note: {note}");
+    }
+    let openapi_inputs = tungsten_config::capabilities::OPENAPI_INPUTS.to_vec();
+    report.human.push_str(&openapi_summary(&openapi_inputs));
+    report.result = Some(CommandResult::Doctor(DoctorResult {
+        tools,
+        openapi_inputs,
+    }));
     if args.strict && !failures.is_empty() {
         report.exit = exit::FAILED;
         report.error = Some(
@@ -234,6 +294,109 @@ pub(crate) fn run(args: &DoctorArgs, env: &CliEnv) -> Report {
         );
     }
     report
+}
+
+/// One line per OpenAPI line; `tungsten capabilities` lists every diagnosed construct.
+fn openapi_summary(inputs: &[tungsten_config::capabilities::OpenApiVersionCapability]) -> String {
+    let mut out = String::from("OpenAPI input (see `tungsten capabilities`):\n");
+    for input in inputs {
+        let _ = match input.unsupported_features.len() {
+            0 => writeln!(out, "  {}.x supported", input.line),
+            n => writeln!(
+                out,
+                "  {}.x {:?}: constructs equivalent to 3.1 are read, plus {} 3.2-only constructs ({}); {n} other 3.2-only constructs get diagnostics TG0140-TG0156",
+                input.line,
+                input.support,
+                input.supported_features.len(),
+                input
+                    .supported_features
+                    .iter()
+                    .map(|f| f.member)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+    }
+    out
+}
+
+/// Intersect already option-resolved bounds, independent of target order.
+pub(crate) struct CombinedRequirement {
+    pub bounds: ToolRequirement,
+    pub excluded_versions: Vec<[u32; 2]>,
+}
+
+impl CombinedRequirement {
+    fn accepts(&self, version: [u32; 2]) -> bool {
+        self.bounds.accepts(version) && !self.excluded_versions.contains(&version)
+    }
+
+    fn has_available_version(&self) -> bool {
+        let mut first = self.bounds.minimum.unwrap_or([0, 0]);
+        while self.excluded_versions.contains(&first) {
+            if let Some(minor) = first[1].checked_add(1) {
+                first[1] = minor;
+            } else if let Some(major) = first[0].checked_add(1) {
+                first = [major, 0];
+            } else {
+                return false;
+            }
+        }
+        self.bounds
+            .maximum_exclusive
+            .is_none_or(|maximum| first < maximum)
+    }
+}
+
+pub(crate) fn aggregate_requirements(
+    requirements: impl IntoIterator<Item = ToolRequirement>,
+) -> Result<std::collections::BTreeMap<&'static str, CombinedRequirement>, String> {
+    let mut combined = std::collections::BTreeMap::<&str, CombinedRequirement>::new();
+    for mut requirement in requirements {
+        // The caller resolved each target's options before combining the bounds.
+        requirement.minimum_option = None;
+        let exclusions = requirement.excluded_versions;
+        requirement.excluded_versions = &[];
+        combined
+            .entry(requirement.tool)
+            .and_modify(|existing| {
+                existing.bounds.minimum = existing
+                    .bounds
+                    .minimum
+                    .into_iter()
+                    .chain(requirement.minimum)
+                    .max();
+                existing.bounds.maximum_exclusive = existing
+                    .bounds
+                    .maximum_exclusive
+                    .into_iter()
+                    .chain(requirement.maximum_exclusive)
+                    .min();
+                existing.excluded_versions.extend(exclusions);
+                existing.excluded_versions.sort_unstable();
+                existing.excluded_versions.dedup();
+            })
+            .or_insert_with(|| {
+                let mut excluded_versions = exclusions.to_vec();
+                excluded_versions.sort_unstable();
+                excluded_versions.dedup();
+                CombinedRequirement {
+                    bounds: requirement,
+                    excluded_versions,
+                }
+            });
+    }
+    for (tool, requirement) in &combined {
+        if !requirement.has_available_version() {
+            return Err(format!(
+                "configured targets have conflicting {tool} requirements: {} (no version satisfies all bounds)",
+                requirement
+                    .bounds
+                    .description_with_exclusions(&requirement.excluded_versions)
+            ));
+        }
+    }
+    Ok(combined)
 }
 
 fn human(tools: &[ToolReport]) -> String {
@@ -248,6 +411,23 @@ fn human(tools: &[ToolReport]) -> String {
     }
     out.push_str("all tools are optional; a missing tool only disables what it is listed for\n");
     out
+}
+
+/// Lifecycle guidance for a Node major the declared floors accept but the
+/// support policy does not cover. Informational only; never a failure.
+fn node_advisory(major: u32) -> Option<String> {
+    let newest = tungsten_config::capabilities::NODE_NEWEST_CHECKED_MAJOR;
+    if major > newest {
+        Some(format!(
+            "Node {major} is newer than the newest checked line ({newest}) and is not yet qualified"
+        ))
+    } else if major >= 22 && major % 2 == 1 {
+        Some(format!(
+            "Node {major} is an odd-numbered line; use an even-numbered LTS line in production"
+        ))
+    } else {
+        None
+    }
 }
 
 /// The argument that makes a tool print its version (`go` has no flag).
@@ -320,7 +500,70 @@ pub(crate) fn parse_version(text: &str) -> Option<String> {
     })
 }
 
-fn version_pair(version: &str) -> Option<(u64, u64)> {
+fn version_pair(version: &str) -> Option<(u32, u32)> {
     let mut parts = version.split('.');
     Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// Check that declared transport references resolve here, without reading
+/// them: environment variables are tested for presence, project-relative files
+/// for existence, and secure-store items are left to the runtime's adapter.
+/// A missing file is a project prerequisite; a missing variable is reported
+/// only, because it may be supplied where the generated client runs.
+fn check_transport(
+    transport: &tungsten_config::transport::TransportReferences,
+    base: &Path,
+    tools: &mut Vec<ToolReport>,
+    failures: &mut Vec<String>,
+) -> Vec<String> {
+    use tungsten_config::transport::Reference;
+    let mut notes = vec![];
+    for (field, reference) in [
+        ("proxy", &transport.proxy),
+        ("no_proxy", &transport.no_proxy),
+        ("ca_bundle", &transport.ca_bundle),
+        ("client_certificate", &transport.client_certificate),
+        ("client_key", &transport.client_key),
+    ] {
+        let name = format!("transport.{field}");
+        match reference {
+            None => {}
+            Some(Reference::Env(variable)) => {
+                let found = std::env::var_os(variable).is_some_and(|value| !value.is_empty());
+                tools.push(ToolReport {
+                    name,
+                    found,
+                    version: None,
+                    purpose: format!(
+                        "environment variable {variable} {} (value not read; it may be set where the client runs)",
+                        if found { "is set" } else { "is not set in this shell" }
+                    ),
+                });
+            }
+            Some(Reference::File(path)) => {
+                let found = base.join(path).is_file();
+                tools.push(ToolReport {
+                    name: name.clone(),
+                    found,
+                    version: None,
+                    purpose: format!(
+                        "project file {path} {} (contents not read)",
+                        if found { "exists" } else { "is missing" }
+                    ),
+                });
+                if !found {
+                    failures.push(format!("{name} file {path}"));
+                }
+            }
+            Some(Reference::Store(_)) => notes.push(format!(
+                "{name}: secure-store item, resolved by the runtime's store adapter; not checked here"
+            )),
+        }
+    }
+    if transport.credential_provider.as_deref() == Some("secure_store") {
+        notes.push(
+            "transport.credential_provider: secure_store; an unavailable store is an error at runtime, never a plaintext fallback".into(),
+        );
+    }
+    notes
 }

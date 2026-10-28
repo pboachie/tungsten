@@ -38,25 +38,46 @@ public sealed partial class ClientCore
         return sent.Response!;
     }
 
-    /// <summary>Sends with retries. With stream, a 2xx text/event-stream answer is returned unread.</summary>
-    internal async Task<Sent> SendWithAsync(Prepared p, CallOptions opts, bool stream, CancellationToken ct)
+    private long ResponseLimit(OperationDescriptor op, CallOptions opts)
     {
-        var op = p.Op;
-        long? cap = opts.MaxResponseBytes ?? maxResponseBytes;
-        if (cap is long limit && (limit < 1 || limit > 9_007_199_254_740_991L))
+        long cap = opts.MaxResponseBytes ?? maxResponseBytes ?? 4 * 1024 * 1024;
+        if (cap < 1 || cap > 9_007_199_254_740_991L)
         {
             throw new Diag(op.Id, Category.ValidationFailed).Param("maxResponseBytes")
                 .Remedy("maxResponseBytes must be a positive safe integer; nothing was sent.").Fail();
         }
+        return cap;
+    }
+
+    /// <summary>Sends with retries. With stream, a 2xx text/event-stream answer is returned unread.</summary>
+    internal async Task<Sent> SendWithAsync(Prepared p, CallOptions opts, bool stream, CancellationToken ct)
+    {
+        var op = p.Op;
+        long cap = ResponseLimit(op, opts);
         var plan = RetryOptionsFor(op);
         bool mutation = Classify.IsMutation(op);
         bool protectedCall = Classify.HasReplayProtection(op, p.HasKey);
         OutcomeCheck? check = mutation && !protectedCall ? OutcomeCheckOf(op, p.Args) : null;
         var attemptTimeout = AttemptTimeout(opts);
         int attempts = 0;
+        TungstenError? previousMutation = null;
         while (true)
         {
             attempts++;
+            // No attempt starts once the deadline has passed; a mutation already sent keeps its outcome.
+            if (previousMutation is not null && DeadlinePassed(opts))
+            {
+                throw new Failure(previousMutation);
+            }
+            CheckDeadline(op, opts, "before the request could be sent");
+            // Each attempt's timeout is cut to the time left before the call's deadline.
+            var timeoutNow = attemptTimeout;
+            bool byDeadline = false;
+            if (Remaining(opts) is TimeSpan left && left < attemptTimeout)
+            {
+                timeoutNow = left < TimeSpan.FromMilliseconds(1) ? TimeSpan.FromMilliseconds(1) : left;
+                byDeadline = true;
+            }
             var rctx = new RequestContext
             {
                 Operation = op.Id,
@@ -74,8 +95,9 @@ public sealed partial class ClientCore
             var method = p.Method;
             var body = p.Payload;
             var entries = p.Headers.Entries.ToList();
-            var idle = stream ? idleTimeout : null;
-            var outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = attemptTimeout, Stream = stream, Idle = idle, MaxResponseBytes = cap }, ct).ConfigureAwait(false);
+            // An open stream keeps the idle bound of an uncut attempt; the deadline only bounds connecting.
+            var idle = stream ? idleTimeout ?? attemptTimeout : (TimeSpan?)null;
+            var outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = timeoutNow, Stream = stream, Idle = idle, MaxResponseBytes = cap }, ct).ConfigureAwait(false);
             for (int hops = 0; !redirectsDisabled && !mutation && hops < MaxRedirects; hops++)
             {
                 if (outcome.Kind != OutcomeKind.Response || outcome.BodyFailure == "oversized" || !IsRedirect(outcome.Status))
@@ -98,13 +120,19 @@ public sealed partial class ClientCore
                 }
                 rctx.Url = next.Value.Shown;
                 rctx.Method = method;
-                outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = attemptTimeout, Stream = stream, Idle = idle, MaxResponseBytes = cap }, ct).ConfigureAwait(false);
+                outcome = await Transport.AttemptAsync(http, new AttemptRequest { Url = target, Method = method, Headers = entries, Body = body, Timeout = timeoutNow, Stream = stream, Idle = idle, MaxResponseBytes = cap }, ct).ConfigureAwait(false);
             }
             p.FinalUrl = target;
             var cctx = new CallContext { Api = api, Op = op, Key = p.Key, HasKey = p.HasKey, KeyHeader = p.KeyHeader, Attempts = attempts, Check = check };
             TungstenError error;
+            // An attempt the deadline cut is the last one, even if its timer fired a little early.
+            bool cut = byDeadline && (outcome.Kind == OutcomeKind.Timeout || (outcome.Kind == OutcomeKind.Response && outcome.BodyFailure == "timeout"));
             try
             {
+                if (cut && (outcome.Kind == OutcomeKind.Timeout || !mutation))
+                {
+                    throw DeadlineTimeout(cctx, outcome.Kind == OutcomeKind.Response ? outcome.Status : null);
+                }
                 return ClassifyResponse(cctx, p, outcome, rctx, attemptTimeout);
             }
             catch (Failure f)
@@ -113,7 +141,12 @@ public sealed partial class ClientCore
             }
             var d = p.Secrets.Scrub(error.Diagnostic);
             var done = error with { Diagnostic = d };
-            if (attempts > plan.Max || !RetryableCategory(d.Category))
+            if (mutation && (previousMutation is null || previousMutation.Diagnostic.Category != Category.OutcomeUnknown
+                || d.Category == Category.OutcomeUnknown))
+            {
+                previousMutation = done;
+            }
+            if (cut || attempts > plan.Max || !RetryableCategory(d.Category))
             {
                 throw new Failure(done);
             }
@@ -145,6 +178,11 @@ public sealed partial class ClientCore
                     _ => r * ceiling,
                 };
             }
+            // A retry that could not start before the deadline is not waited for.
+            if (Remaining(opts) is TimeSpan rest && rest <= Util.DurationMs(delayMs))
+            {
+                throw new Failure(done);
+            }
             Hooks(m => m.OnRetry(rctx, d));
             try
             {
@@ -155,6 +193,19 @@ public sealed partial class ClientCore
                 throw new Failure(done);
             }
         }
+    }
+
+    /// <summary>The call's deadline ran out before a response (or a read's body) arrived.</summary>
+    private static Failure DeadlineTimeout(CallContext cctx, int? status)
+    {
+        const string cause = "The operation deadline expired before a response arrived.";
+        if (Classify.IsMutation(cctx.Op))
+        {
+            return new Failure(Classify.OutcomeUnknown(cctx, cause, new UnknownFields()));
+        }
+        return new Diag(cctx.Op.Id, Category.UpstreamUnavailable).Code("DEADLINE_EXCEEDED").Status(status).Retry(Retryable.Never)
+            .Remedy(cause + " This read has no side effects; call again with a larger Deadline.")
+            .Attempts(cctx.Attempts).Fail();
     }
 
     /// <summary>The URL a read's redirect points to when it stays on the request's origin, with the auth query re-applied.</summary>
@@ -310,7 +361,7 @@ public sealed partial class ClientCore
         }
         else if (mode != ValidateResponses.Off && op.Response is { } schema && decoded.Has)
         {
-            var issues = Judge(schema, decoded.Value);
+            var issues = Judge(op.Id, "response", schema, decoded.Value);
             if (issues.Count > 0)
             {
                 var issue = issues[0];
@@ -357,15 +408,43 @@ public sealed partial class ClientCore
     }
 
     /// <summary>A validator that only judges (responses, page items, events): a failure inside it is an issue at the root.</summary>
-    internal static IReadOnlyList<Issue> Judge(Schema schema, JsonNode? value)
+    internal IReadOnlyList<Issue> Judge(string operation, string root, Schema schema, JsonNode? value, Category category = Category.UnexpectedResponse)
     {
         try
         {
-            return schema.Validate(value);
+            var notes = new List<PatternNote>();
+            var issues = schema.Validate(value, notes);
+            ReportUncheckedPatterns(operation, root, notes, category);
+            return issues;
         }
         catch (Exception e) when (e is not Failure)
         {
             return new[] { new Issue(System.Array.Empty<object>(), "the response schema failed (the validator panicked)") };
+        }
+    }
+
+    /// <summary>
+    /// A schema pattern the runtime cannot check (it has no .NET equivalent, or matching timed out) accepts the
+    /// value, as the other runtimes do, but is reported once per call through <c>OnDiagnostic</c>.
+    /// </summary>
+    internal void ReportUncheckedPatterns(string operation, string root, IReadOnlyList<PatternNote> notes, Category category)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var note in notes)
+        {
+            if (seen.Count >= 16)
+            {
+                break;
+            }
+            var param = root + Schema.FormatPath(note.Path);
+            if (!seen.Add(param + "\n" + note.Pattern))
+            {
+                continue;
+            }
+            Emit(new Diag(operation, category).Code("PATTERN_UNCHECKED").Retry(Retryable.Never).Param(param)
+                .Expected("a value matching the pattern /" + note.Pattern + "/")
+                .Remedy($"The pattern /{note.Pattern}/ at {param} was not checked because {note.Reason}; the value was accepted without it. The server still validates it.")
+                .Build());
         }
     }
 

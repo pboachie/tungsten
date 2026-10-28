@@ -3,7 +3,7 @@
 //! client, the macros, the dispatch table and the descriptor document.
 
 use tungsten_emit::Writer;
-use tungsten_emit::sdk::descriptors::{method_str, op_summary, safety_str};
+use tungsten_emit::sdk::descriptors::{op_summary, safety_str};
 use tungsten_emit::sdk::{
     ArgPlan, ArgSource, ClientPlan, DocumentOptions, MemberKind, MemberPlan, OpPlan, SuccessPlan,
     document_value,
@@ -77,6 +77,14 @@ fn entry(g: &Gen<'_, '_>) -> String {
         );
         if g.plan.ir.agent.redirects == tungsten_ir::RedirectPolicy::None {
             w.line("::Tungsten::Runtime::ClientCore.require_redirect_policy_v1");
+        }
+        if g
+            .plan
+            .operations
+            .iter()
+            .any(|p| p.op.agent.import_policy.is_some())
+        {
+            w.line("::Tungsten::Runtime::ClientCore.require_import_policy_v1");
         }
         w.line(format!(
             "DESCRIPTORS = ::Tungsten::Runtime::Descriptors.load(File.join(__dir__, {}, \"tungsten-descriptors.json\"))",
@@ -189,7 +197,7 @@ fn op_doc(g: &Gen<'_, '_>, index: usize, op: &OpPlan<'_>, member: &str) -> Strin
     }
     parts.push(format!(
         "`{} {}` (`{}`). Safety: `{}`.",
-        method_str(o.method),
+        o.wire_method(),
         o.path.raw,
         o.id.0,
         safety_str(op.safety)
@@ -223,7 +231,7 @@ fn op_doc(g: &Gen<'_, '_>, index: usize, op: &OpPlan<'_>, member: &str) -> Strin
         .map(|(a, n)| format!("@param {n} {}", arg_doc(g, a)))
         .collect();
     tags.push(
-        "@param opts [Tungsten::Runtime::CallOptions, Hash, nil] call options: `idempotency_key`, `confirm`, `timeout_ms`, `verify`, `headers`."
+        "@param opts [Tungsten::Runtime::CallOptions, Hash, nil] call options: `idempotency_key`, `confirm`, `timeout_ms`, `deadline_ms`, `verify`, `headers`."
             .to_string(),
     );
     let value = match &op.success {
@@ -479,7 +487,7 @@ fn client(g: &Gen<'_, '_>) -> String {
         w.blank();
         comment(
             w,
-            "@param options [Tungsten::Runtime::ClientOptions, Hash, nil] client options; keywords are merged over them (`base_url:`, `auth:`, `timeout_ms:`, `retries:`, `middleware:`, ...).",
+            "@param options [Tungsten::Runtime::ClientOptions, Hash, nil] client options; keywords are merged over them (`base_url:`, `auth:`, `timeout_ms:`, `deadline_ms:`, `retries:`, `middleware:`, ...).",
         );
         w.line("def initialize(options = nil, **keywords)");
         w.indent();
@@ -502,7 +510,7 @@ fn client(g: &Gen<'_, '_>) -> String {
         w.blank();
         comment(
             w,
-            "The OAuth2 authorization-code helpers of an auth scheme (`authorization_url`, `exchange_code`, `refresh`, `pkce`).\n\n@return [Tungsten::Runtime::OAuthFlow]",
+            "Managed OAuth2 authorization: `authorization_url` owns state/S256 and returns an attempt; `exchange_code` requires its handle, full callback URL and owning session binding. `refresh`, `cancel_authorization` and `logout` use fenced session state. Explicit primitive escapes are `low_level_authorization_url`, `low_level_exchange_code`, `low_level_refresh`; `pkce` is a primitive utility.\n\n@return [Tungsten::Runtime::OAuthFlow]",
         );
         w.line("def oauth(scheme) = @core.oauth(scheme)");
         w.dedent();

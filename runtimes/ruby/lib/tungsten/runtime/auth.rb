@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 # SPDX-License-Identifier: Apache-2.0
 
+require "ipaddr"
+
 module Tungsten
   module Runtime
     # Auth resolution: an operation's security is an OR of AND-sets of
@@ -9,6 +11,36 @@ module Tungsten
     # `satisfies` list when every part it needs for this request is
     # configured.
     class ClientCore
+      INSECURE_HTTP_AUTH = "Refusing to send credentials over non-loopback HTTP. Use HTTPS, or set ClientOptions.allow_insecure_http = true for intentional insecure transport. Nothing was sent."
+
+      def credential_header?(name, preserved_idempotency = false)
+        (!preserved_idempotency && Util.looks_sensitive?(name)) ||
+          %w[authorization proxy-authorization cookie].include?(name.downcase) ||
+          Array(@api["auth"]).any? do |scheme|
+            (scheme["kind"] == "api_key" && scheme["in"] == "header" && scheme["wire"].to_s.casecmp?(name)) ||
+              (scheme["kind"] == "composite" && Array(scheme["parts"]).any? do |part|
+                part["kind"] == "header" && part["from_config"].to_s.empty? && part["name"].to_s.casecmp?(name)
+              end)
+          end
+      end
+
+      def insecure_http?(url)
+        return false if @allow_insecure_http
+
+        parsed = URI.parse(url.to_s)
+        host = parsed.hostname.to_s.downcase
+        return false if parsed.scheme&.downcase != "http" || %w[localhost localhost.].include?(host)
+
+        begin
+          ip = IPAddr.new(host)
+          loopback = ip.ipv4? ? (ip.to_i >> 24) == 127 : ip.to_i == 1
+          !loopback
+        rescue IPAddr::InvalidAddressError
+          true
+        end
+      rescue URI::InvalidURIError
+        false
+      end
       # The headers, cookies and query parameters credentials add.
       AuthPlan = Struct.new(:headers, :cookies, :query) do
         def self.empty = new([], [], [])
@@ -23,7 +55,7 @@ module Tungsten
 
       private
 
-      def safe_method?(method) = %w[GET HEAD OPTIONS TRACE].include?(method)
+      def safe_method?(method) = %w[GET HEAD OPTIONS TRACE QUERY].include?(method)
 
       def composite_key(part)
         case part["kind"]
@@ -212,7 +244,7 @@ module Tungsten
       end
 
       # The credentials for an operation.
-      def resolve_auth(op, method)
+      def resolve_auth(op, method, credential_error = nil)
         empty = AuthResult.new(AuthPlan.empty, Util::Secrets.new, nil, nil)
         return empty if op.security.empty?
 
@@ -232,6 +264,7 @@ module Tungsten
             existing ? existing[1] = sat : sats << [key, sat]
           end
           if missing.empty?
+            return AuthResult.new(nil, nil, nil, credential_error) if !sats.empty? && credential_error
             out = AuthResult.new(AuthPlan.empty, Util::Secrets.new, nil, nil)
             sats.each do |_, sat|
               problem = apply(sat, out)

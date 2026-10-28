@@ -9,10 +9,10 @@ use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::args::{BodyArg, args_layout};
 use tungsten_emit::{CommentStyle, Imports, Writer};
 use tungsten_ir::{
-    ApiKeyIn, AuthScheme, BodyContent, BodyEncoding, CompositePart, HttpMethod, IdempotencyKind,
-    Ir, Jitter, OperationAgentMeta, OperationStatus, PaginationStyle, Param, ParamRole, ParamStyle,
-    Presence, PreviewMode, Remediation, ResponseKind, RetryPolicy, Retryable, Safety, Shape,
-    StatusMatch, TypeRef,
+    ApiKeyIn, AuthScheme, BodyContent, BodyEncoding, CompositePart, IdempotencyKind, Ir, Jitter,
+    OperationAgentMeta, OperationStatus, PaginationStyle, Param, ParamRole, ParamStyle, Presence,
+    PreviewMode, Remediation, ResponseKind, RetryPolicy, Retryable, Safety, Shape, StatusMatch,
+    TypeRef,
 };
 
 use crate::models::{
@@ -211,7 +211,16 @@ pub(crate) fn op_shape<'a>(plan: &Plan<'a>, info: &OpInfo<'a>) -> OpShape<'a> {
             None => {
                 let name = key.unwrap_or_else(|| "body".to_string());
                 let (ts, zod, ty) = match content.encoding {
-                    BodyEncoding::Bytes | BodyEncoding::Jsonl => (
+                    BodyEncoding::Bytes => {
+                        uses.upload = true;
+                        (
+                            "Uint8Array | UploadSource".to_string(),
+                            "z.union([z.instanceof(Uint8Array), z.custom<UploadSource>((value) => value instanceof UploadSource)])"
+                                .to_string(),
+                            None,
+                        )
+                    }
+                    BodyEncoding::Jsonl => (
                         "Uint8Array".to_string(),
                         "z.instanceof(Uint8Array)".to_string(),
                         None,
@@ -364,19 +373,6 @@ fn items_ref<'p>(plan: &'p Plan<'_>, body: &'p TypeRef, items_field: &str) -> Op
     tungsten_emit::args::page_items_ref(plan.ir, body, items_field)
 }
 
-pub(crate) fn method_str(m: HttpMethod) -> &'static str {
-    match m {
-        HttpMethod::Get => "GET",
-        HttpMethod::Put => "PUT",
-        HttpMethod::Post => "POST",
-        HttpMethod::Delete => "DELETE",
-        HttpMethod::Options => "OPTIONS",
-        HttpMethod::Head => "HEAD",
-        HttpMethod::Patch => "PATCH",
-        HttpMethod::Trace => "TRACE",
-    }
-}
-
 pub(crate) fn safety_str(s: Safety) -> &'static str {
     match s {
         Safety::ReadOnly => "read_only",
@@ -414,6 +410,7 @@ fn style_str(s: ParamStyle) -> &'static str {
         ParamStyle::SpaceDelimited => "space_delimited",
         ParamStyle::PipeDelimited => "pipe_delimited",
         ParamStyle::DeepObject => "deep_object",
+        ParamStyle::Cookie => "cookie",
     }
 }
 
@@ -726,7 +723,7 @@ pub(crate) fn write_args_type(w: &mut Writer, info: &OpInfo<'_>, shape: &OpShape
         &format!(
             "Arguments of `{}` ({} {}).",
             info.op.id.0,
-            method_str(info.op.method),
+            info.op.wire_method(),
             info.op.path.raw
         ),
     );
@@ -788,12 +785,32 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
                     Js::obj(vec![("kind", Js::str("arg")), ("arg", Js::str(arg))])
                 }
             };
-            Js::obj(vec![
+            let mut members = vec![
                 ("mediaType", Js::str(&b.content.media_type)),
                 ("encoding", Js::str(encoding_str(b.content.encoding))),
                 ("required", Js::bool(b.required)),
                 ("shape", shape_js),
-            ])
+            ];
+            if !b.content.parts.is_empty() {
+                let parts = b.content.parts.iter().map(|part| {
+                    let mut entry = vec![("name", Js::str(&part.name))];
+                    if let Some(content_type) = &part.content_type {
+                        entry.push(("contentType", Js::str(content_type)));
+                    }
+                    if !part.headers.is_empty() {
+                        let headers = part.headers.iter().map(|h| {
+                            Js::obj(vec![
+                                ("name", Js::str(&h.name)),
+                                ("value", Js::str(&h.value)),
+                            ])
+                        });
+                        entry.push(("headers", Js::Array(headers.collect())));
+                    }
+                    Js::obj(entry)
+                });
+                members.push(("parts", Js::Array(parts.collect())));
+            }
+            Js::obj(members)
         },
     );
     let responses = Js::Array(
@@ -869,7 +886,7 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
     request.push_str(&format!(" satisfies z.ZodType<{}>,\n)", info.args_type));
     let mut entries = vec![
         ("id", Js::str(&op.id.0)),
-        ("method", Js::str(method_str(op.method))),
+        ("method", Js::str(op.wire_method())),
         ("path", Js::str(&op.path.raw)),
         ("params", params),
         ("body", body),
@@ -902,6 +919,9 @@ fn descriptor_js(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Js 
         }
         if let Some(flag) = &spec.request_flag {
             stream_entries.push(("flag", Js::str(flag)));
+        }
+        if spec.text_data {
+            stream_entries.push(("text", Js::bool(true)));
         }
         entries.push(("stream", Js::obj(stream_entries)));
     }
@@ -1178,7 +1198,9 @@ pub(crate) fn descriptors_file(
     for (info, shape) in plan.ops.iter().zip(shapes) {
         uses.integer |= shape.uses.integer;
         uses.pattern |= shape.uses.pattern;
+        uses.length |= shape.uses.length;
         uses.binary |= shape.uses.binary;
+        uses.upload |= shape.uses.upload;
         uses.namespaces
             .extend(shape.uses.namespaces.iter().cloned());
         body.blank();
@@ -1188,7 +1210,7 @@ pub(crate) fn descriptors_file(
         body.doc(
             CommentStyle::JsDoc,
             &paragraphs([
-                format!("`{} {}`", method_str(info.op.method), info.op.path.raw),
+                format!("`{} {}`", info.op.wire_method(), info.op.path.raw),
                 summary,
             ]),
         );
@@ -1228,9 +1250,15 @@ pub(crate) fn descriptors_file(
     if uses.pattern {
         imports.add("./internal.js", "withPattern");
     }
+    if uses.length {
+        imports.add("./internal.js", "withLength");
+    }
     if uses.binary {
         imports.add("./internal.js", "binary");
         imports.add_type("./internal.js", "BinaryInput");
+    }
+    if uses.upload {
+        imports.add("@elysra/tungsten-runtime", "UploadSource");
     }
     let mut w = Writer::new("  ");
     w.line(header);

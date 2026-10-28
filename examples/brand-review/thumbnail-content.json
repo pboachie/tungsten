@@ -1,0 +1,10 @@
+{
+  "version": "v0.1.2",
+  "eyebrow": "A REAL TERMINAL WALKTHROUGH",
+  "title": [
+    "One API.",
+    "SDKs, CLI, MCP."
+  ],
+  "native": "Native OpenAPI: 7 SDK languages",
+  "imports": "Imported SDK targets: TypeScript / Python / Rust"
+}

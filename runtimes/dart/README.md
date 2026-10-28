@@ -25,16 +25,287 @@ Calls return a typed result or a diagnostic envelope describing recovery;
 unknown outcomes never justify blindly repeating a mutation. The API remains
 responsible for authorization and server-side idempotency.
 
+## Durable automatic keys
+
+Select `FileIdempotencyStore` through `ClientOptions.idempotencyStore` to reuse
+keys after a restart and coordinate automatic key allocation across processes.
+The version-1 JSON file and `<path>.lock` owner lease interoperate with the
+TypeScript, Python, Go, Rust, Java, C#, Ruby and Dart stores.
+
+```dart
+final client = ClientOptions(
+  idempotencyStore: FileIdempotencyStore('./state/idempotency.json'),
+);
+```
+
+Automatic allocation calls `reserve(scope, logicalId, candidate)` to return an
+existing non-empty key or persist one candidate while holding the shared lease.
+`reserve` is available on every `IdempotencyStore`: a custom store that only
+implements `get` and `put` keeps working and is serialized per store instance,
+but a backend shared across processes must implement `AtomicIdempotencyStore`
+with its own atomic reservation. Direct `put` calls do not take the
+cross-process lease and must not race with another writer.
+
+The file store writes a private temporary file in the same directory and renames
+it over the store. Files and leases are mode 0600 on POSIX systems (set with
+`chmod`; a file that stays readable by others is refused); protect the
+containing directory with appropriate ACLs on Windows. A corrupt or unreadable
+file fails closed with a `FileSystemException`, and the call is not sent rather
+than issue a second key for the same intent. Lease acquisition waits up to two
+seconds. A lease is never reclaimed automatically, even if its recorded process
+appears dead: remove an abandoned `<path>.lock` only after confirming its owner
+has stopped. A writer checks its token immediately before the rename and removes
+only its own lease. Use a filesystem with exclusive creation and atomic rename;
+this is not a distributed transaction service. Losing the file can cause a new
+key for a previous intent.
+
+## Credential transport
+
+Credentials require HTTPS by default, including OAuth client-credentials, code
+exchange and refresh endpoints. Non-loopback HTTP returns `AUTH_FAILED` before
+sending credentials. Migrate authenticated HTTP services to HTTPS, or explicitly
+opt in with `ClientOptions(allowInsecureHttp: true)` for intentional insecure transport.
+This permits cleartext credentials; enable it only for a trusted environment.
+
+The local-development exception covers `localhost` (also with a trailing dot),
+literal IPv4 `127/8`, and IPv6 `::1`. Subdomains, unspecified addresses and
+IPv4-mapped IPv6 addresses require the explicit override. DNS resolution does not
+grant an exception. Anonymous HTTP requests remain supported.
+
+## Managed OAuth authorization
+
+In unreleased 0.2.0, `OAuthFlow.authorizationUrl` returns a managed
+`Result<AuthorizationAttempt>` synchronously. Configure the scheme with
+`Credential.authorizationCode(clientId: ..., redirectUri: ...)`, qualify the
+provider's S256 support and pin an issuer defense. Public clients omit
+`clientSecret`; confidential clients obtain it from application-owned secure
+configuration. The caller owns the browser or native listener and supplies its
+unpredictable session binding and the complete callback received by that owner.
+
+```dart
+final flow = core.oauth('user');
+try {
+  final begun = flow.authorizationUrl(
+    sessionBinding: sessionBinding,
+    issuerDefense: IssuerDefense.issuerResponse(issuer),
+    s256Supported: true,
+  );
+  if (begun is Err<AuthorizationAttempt>) {
+    throw StateError(begun.error.remediation);
+  }
+  final attempt = (begun as Ok<AuthorizationAttempt>).value;
+  // Open attempt.url in that browser and await its full callbackUrl.
+  final completed = await flow.exchangeCode(
+    attemptHandle: attempt.attemptHandle,
+    callbackUrl: callbackUrl,
+    sessionBinding: sessionBinding,
+  );
+  if (completed is Err<TokenInfo>) {
+    throw StateError(completed.error.remediation);
+  }
+  // The token is stored; authenticated calls can now use it.
+} finally {
+  flow.cancelAllAuthorization();
+}
+```
+
+The default owns random state and an S256 verifier for each opaque attempt.
+Issuer-response defense requires the exact decoded `iss` on every callback;
+missing `iss` never selects another defense. Alternatively, explicitly qualify
+`IssuerDefense.distinctRedirect(...)` for a provider-specific redirect. Duplicate,
+malformed, mismatched, expired, canceled and replayed callbacks refuse before a
+token request. Invalid unrelated callbacks leave the legitimate attempt usable.
+A claimed callback is consumed even if its token request has an ambiguous result;
+never blindly repeat a code exchange. Endpoint query/extra parameters cannot
+override protected authorization fields.
+
+`cancelAuthorization(handle, binding)` cancels one attempt. The synchronous
+`cancelAllAuthorization()` invalidates this scheme's pending attempts and running
+read/refresh/exchange work, disposes its attempt timers, preserves any stored
+credential, and permits a new managed attempt. Dart timers can keep an isolate
+alive: call this real cleanup helper in the owning application's `finally` block.
+Cancellation signals (`OAuthCancellation`) and expiry invalidate results while
+claimed network/store work retains admission until actual settlement. An
+arbitrary custom store/future that never settles can hold its bounded slot; this
+is not a hard wall-clock guarantee or physical secret zeroization.
+
+`await flow.logout()` fences local work before attempting token removal. Even if
+cleanup fails or capacity is exhausted, older work stays fenced and managed
+reads remain logged out until a successful newer login. Logout does not revoke
+provider tokens. Separate logout generations and credential mutation epochs
+prevent an older refresh from overwriting/removing a newer managed login even
+when the provider reissues identical token strings.
+
+Custom managed stores must implement `FencedTokenStore`: evaluate the supplied
+stateful predicate exactly once at the final serialized mutation, with no await,
+retry or speculative check before committing. False/throw must preserve the
+prior token. A failed commit can conservatively advance the epoch. The manager
+holds no internal lock while invoking stores or bounded configuration callbacks;
+final predicates revalidate mutable configuration synchronously before checking
+their internal generation, epoch and deadline. Custom collection getters and
+store implementations must cooperate with that synchronous atomic boundary.
+Direct external or low-level writes bypass managed epochs; shared account
+partitioning and persistent adapters need separate qualification.
+
+Migration: old primitive calls are now explicitly named
+`lowLevelAuthorizationUrl` and `lowLevelExchangeCode`. Those helpers leave PKCE,
+state, full callback validation and issuer defense to the caller and must not be
+used as the generated login default. They do not establish managed store fencing.
+Never log handles, authorization/callback URLs, codes, bindings, verifiers or
+tokens. Diagnostic error labels use a finite OAuth allowlist; provider descriptions
+and arbitrary error strings are not copied into failures.
+
+## Opening authorization URLs safely
+
+OAuth authorization helpers return URL data; they do not open a browser. Treat
+provider endpoints and returned URLs as untrusted input. Apply your application's
+URL policy and use a browser or native URL API that treats the complete target as
+literal data. Never interpolate the URL into PowerShell, CMD, POSIX shell or other
+command source, and do not pass it to an opener that does so internally.
+
+Scheme validation alone does not prevent command injection: an ordinary HTTPS
+URL can contain shell expansion characters. Managed OAuth endpoint checks are
+protocol validation, not shell escaping. Explicit low-level compatibility helpers
+retain application-owned URL policy, including custom schemes; their results
+need the same safe integration boundary. Do not silently route a rejected URL or
+failed browser launch through a shell fallback.
+
+These boundaries do not qualify third-party openers, custom integrations or real
+provider/listener behavior. Qualify the application's complete launch path on
+each supported platform, including Windows and WSL.
+
 ## Limits
 
-The `dart:io` transport is not a browser transport. Applications own
-persistent storage and must supply appropriate token and idempotency store
-implementations when process-local state is insufficient.
+Multipart bodies: a field whose OpenAPI `encoding` entry declares a
+`contentType` is sent with that media type (the first entry without
+wildcards); a file part's own media type wins. The entry's `headers` are not
+sent (the TypeScript, Python and Rust runtimes send those with a fixed
+value), and neither is positional or nested multipart encoding. Unreleased
+0.2.0 only.
 
-No runtime ships a file-backed OAuth token store. Provide an application-owned
-token-store implementation when tokens must survive process restarts; protect
-stored credentials and avoid logging them. Registry publication and package
-availability are separate from building this source checkout.
+The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
+not run by the client: configure the scheme with an access token obtained
+through it.
+
+A tagged union with an OpenAPI 3.2 discriminator `defaultMapping` decodes an
+object whose tag is missing, not a string or claimed by no other variant as the
+default variant; its own field types then apply. Without `defaultMapping`
+such an object is refused. A value that is not an object is always refused.
+
+In unreleased 0.2.0, `deadline` (a `Duration` on `ClientOptions` or `CallOptions`) sets a total
+deadline for one logical call, separate from the per-attempt `timeout`. It is measured on a
+monotonic clock and covers authentication, idempotency-key reservation, every attempt (each one's
+`timeout` is cut to the time left), retry waits, response bodies and verification; for `pages`,
+`poll` and `runMacro` it covers the whole traversal, poll or macro, and nested work cannot restart
+it. No attempt starts after it expires: the call fails with `code` `DEADLINE_EXCEEDED`, and a
+mutation that was already sent reports `OUTCOME_UNKNOWN`, never a blind replay. A retry wait or
+poll interval that would end after the deadline is not waited for. For `stream` it bounds
+connecting and each reconnect, never an open stream (use `idleTimeout`). A shared OAuth token
+refresh or idempotency-store write is not cancelled at the deadline, only no longer waited for, so
+other callers still get its result; it stays bounded by its own timeout. Default: no total
+deadline.
+
+Managed OAuth admits at most 32 attempts, 32 token-work owners and 32 waiting
+read/refresh callers per client; retained scheme identities are also capped at
+32. Attempts expire after ten monotonic minutes. Captured configuration strings
+have a combined 32 KiB strict UTF-8 budget with at most 64 scopes/extras/credential
+parts; callback text and decoded fields have a 16 KiB budget and at most 64
+parameters. Selected endpoint, scopes, extras and credential inputs are checked
+before URL parsing or copying their caller collections. Overall descriptor
+traversal and temporary allocations remain cooperative and are not a whole-heap
+or whole-descriptor bound.
+Authorization-code and refresh responses default to 64 KiB. Set
+`ClientOptions.maxOAuthTokenResponseBytes` to a positive integer up to 1 MiB for
+larger providers. This does not change the separate client-credentials response
+budget. Custom stored token strings are independently bounded by that response
+cap; limits bound accepted data rather than total parser/HTTP/runtime heap usage.
+
+In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
+Set `ClientOptions.maxResponseBytes` to choose a finite client cap; the call option with the same
+native name overrides it. Omitted/null values inherit the default or client cap,
+not an unlimited mode. Values must be positive safe integers (at most
+9007199254740991), validated before authentication, storage and preview effects.
+This covers ordinary success/error bodies, server previews, each page and each
+verification read. A page cap does not bound collecting many pages.
+
+Content-Length can reject an oversized representation early; actual delivered
+bytes are counted even without it. HEAD/204/205/304 metadata alone does not
+consume the budget, but any body bytes a transport delivers are still counted.
+Overflow closes the owned body and returns `UNEXPECTED_RESPONSE`, code
+`RESPONSE_TOO_LARGE`, with `retryable: never`. A mutation may have taken effect:
+inspect API state before retrying. The cap is separate from OAuth token-response
+and successful SSE event/collection budgets.
+
+The default transport does not decompress encoded bodies; use identity encoding. Encoded delivery does not establish a decoded-content limit.
+The cap limits accepted body bytes; parsers, copies and HTTP decoders can allocate
+more. Custom transports must stream nonempty bodies and honor cancellation;
+their own buffering, decoding and settlement behavior need separate qualification.
+
+Streams: a server-sent event larger than `ClientOptions.maxEventBytes` (1 MiB)
+fails the stream. `EventStream.collect` keeps at most `maxCollectBytes` (4 MiB)
+of event JSON and runs at most `maxCollect` (60 s); a dropped stream reconnects
+`maxReconnects` times (3; 0 turns it off).
+
+### Platform and availability
+
+- Requires Dart 3.6 or newer, below 4 (`pubspec.yaml`); the package declares
+  Linux, macOS and Windows. The transport is `dart:io`, so browsers and Dart
+  for the web are not supported.
+- `ClientOptions` has no HTTP client or proxy setting. Applications own
+  persistent storage and must supply appropriate token stores; no runtime ships
+  a file-backed OAuth token store.
+- The default idempotency store is process-local (`MemoryIdempotencyStore`);
+  `FileIdempotencyStore` (see Durable automatic keys) is the durable one.
+- `tungsten_runtime` is not published on pub.dev. Use the path dependency in
+  Install from source.
+
+### Schema features and fallback types
+
+Since 0.2.0 an `allOf` that cannot be merged into one record is a final class
+with one typed part per member, an enum of booleans or fractional numbers is an
+enhanced enum of its JSON values, and an operation whose success bodies differ
+by exact status returns a sealed class of its answers (read `status` to tell
+them apart).
+
+Still the JSON value (`Object?`), which the runtime validates against the schema:
+
+- an `allOf` without members and an enum with an integer beyond 64 bits (TG1071,
+  a warning);
+- a success whose bodies differ and are not one JSON body (or none) per exact
+  status: a range or `default` status, or a text or binary body among them.
+
+A discriminated union with a variant that has no tag value tries its variants in
+order (TG1075). OpenID Connect is sent as a bearer token without discovery
+(TG1073). A macro outside the canonical form is left out (TG1072). The Dart
+target emits no CLI or MCP server; the `mcp` target is separate.
+
+### Schema strings
+
+`min_length` and `max_length` count Unicode code points, so an emoji is one
+character; code-point counting is the contract in every runtime. A lone surrogate
+counts as one.
+
+`pattern` is an ECMAScript expression, searched anywhere in the string. It runs
+with Unicode semantics (`RegExp(unicode: true)`, the `u` flag): `\p{...}`,
+`\u{...}` and astral-plane characters match as whole code points, and `.` matches
+one code point. A pattern the Unicode mode rejects only for legacy syntax, such as
+an identity escape (`\_`), is run without it. Differences remain: Dart's engine
+follows ECMAScript but is not V8 (supported property names, case folding and
+syntax corner cases can differ), and a pattern that behaves differently with and
+without the `u` flag is judged with the flag, which can differ from a runtime
+that compiles it without.
+
+A pattern neither mode can compile accepts the value, as in the other runtimes,
+but is no longer silent: `ClientOptions.onDiagnostic` receives a diagnostic with
+code `PATTERN_UNCHECKED` (category `VALIDATION_FAILED` for a request,
+`UNEXPECTED_RESPONSE` otherwise), once per path and pattern, whose
+`failed_parameter` is the path (`args...`, `response...`, `events[n]...` or a page
+item) and whose remediation names the pattern and the reason, never the value.
+For an untagged union, diagnostics come from the first variant that accepts the
+value, including patterns nested in that variant; rejected variants do not
+produce warnings. Paths retain the enclosing object members and array indexes.
+The server still validates the value. `Schema.validate` called directly stays
+silent unless it is given an `onUnchecked` observer.
 
 ## License
 

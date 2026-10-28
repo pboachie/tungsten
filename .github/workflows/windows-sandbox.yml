@@ -32,11 +32,22 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22"
+          node-version: "22.23.4"
           package-manager-cache: false
+      # setup-python's archive installer upgrades pip before returning; force
+      # that bootstrap to use only the PSF hash-verified local wheel.
+      - name: Stage verified pip for interpreter setup
+        shell: bash
+        run: python -I crates/tungsten-cli/src/commands/bootstrap_python.py --fetch-only --wheel-dir "$RUNNER_TEMP/tungsten-pip-bootstrap"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        env:
+          PIP_CONFIG_FILE: ${{ runner.os == 'Windows' && 'nul' || '/dev/null' }}
+          PIP_NO_INDEX: "1"
+          PIP_FIND_LINKS: ${{ runner.temp }}/tungsten-pip-bootstrap/pip-26.2.2-py3-none-any.whl
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
         with:
-          python-version: "3.12"
+          python-version: "3.14.9"
+          check-latest: true
       # Same bounded immutable-helper route as the release bootstrap rehearsal.
       # The credential exists only in this download step; no source/test process
       # is started here, and no checkout credentials persist on disk.

@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 use tungsten_core::Digest;
 use tungsten_emit::schema::{collapse_whitespace, prune_sentences};
 use tungsten_ir::{
-    AuthScheme, CompositePart, HttpMethod, IdempotencyKind, Ir, Macro, Namespace, Operation,
-    OperationStatus, Resource, Safety,
+    AuthScheme, CompositePart, IdempotencyKind, Ir, Macro, Namespace, Operation, OperationStatus,
+    Resource, Safety,
 };
 
 /// Longest tool name accepted by common function-calling APIs.
@@ -212,23 +212,10 @@ pub(crate) fn summary(op: &Operation) -> String {
     text.unwrap_or_else(|| op.id.0.clone())
 }
 
-pub(crate) fn method(m: HttpMethod) -> &'static str {
-    match m {
-        HttpMethod::Get => "GET",
-        HttpMethod::Put => "PUT",
-        HttpMethod::Post => "POST",
-        HttpMethod::Delete => "DELETE",
-        HttpMethod::Options => "OPTIONS",
-        HttpMethod::Head => "HEAD",
-        HttpMethod::Patch => "PATCH",
-        HttpMethod::Trace => "TRACE",
-    }
-}
-
 /// `POST /v1/workflow/tools (method workflow.action.send)` for rpc methods,
 /// `GET /v1/pets` otherwise.
 pub(crate) fn endpoint(op: &Operation) -> String {
-    let base = format!("{} {}", method(op.method), op.path.raw);
+    let base = format!("{} {}", op.wire_method(), op.path.raw);
     match &op.rpc {
         Some(rpc) => format!(
             "{base} ({} {})",

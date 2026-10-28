@@ -300,9 +300,17 @@ public final class Descriptors {
                             str(f.get("key"), ""), str(f.get("wire"), "")));
                 }
             }
+            Map<String, String> partTypes = new LinkedHashMap<>();
+            for (JsonObject part : objects(b.get("parts"))) {
+                String contentType = str(part.get("content_type"));
+                if (contentType != null) {
+                    partTypes.putIfAbsent(str(part.get("name"), ""), contentType);
+                }
+            }
             body = new OperationDescriptor.Body(
                     str(b.get("media_type"), "application/json"), str(b.get("encoding"), "json"),
-                    bool(b.get("required")), Collections.unmodifiableList(fields), arg);
+                    bool(b.get("required")), Collections.unmodifiableList(fields), arg,
+                    Collections.unmodifiableMap(partTypes));
         }
         List<OperationDescriptor.Response> responses = new ArrayList<>();
         for (JsonObject r : objects(o.get("responses"))) {
@@ -357,7 +365,7 @@ public final class Descriptors {
         if (o.get("stream") instanceof JsonObject) {
             JsonObject s = (JsonObject) o.get("stream");
             stream = new OperationDescriptor.Stream(
-                    Schema.read(s.get("event"), defs), str(s.get("done")), str(s.get("flag")));
+                    Schema.read(s.get("event"), defs), str(s.get("done")), str(s.get("flag")), bool(s.get("text")));
         }
         return new OperationDescriptor(
                 str(o.get("id"), ""),
@@ -411,7 +419,21 @@ public final class Descriptors {
                 str(a.get("remediation_note")),
                 strings(a.get("sensitive_response_fields")),
                 sensitiveRequest,
-                bool(a.get("shown_once")));
+                bool(a.get("shown_once")),
+                importPolicy(a.get("import_policy")));
+    }
+
+    private static OperationDescriptor.ImportPolicy importPolicy(Object raw) {
+        if (!(raw instanceof JsonObject)) {
+            return null;
+        }
+        JsonObject p = (JsonObject) raw;
+        // Only a literal true counts as reviewed; anything else fails closed.
+        return new OperationDescriptor.ImportPolicy(
+                strings(p.get("allowed_origins")),
+                Safety.fromWire(str(p.get("inferred_safety"), "irreversible")),
+                Boolean.TRUE.equals(p.get("reviewed")),
+                str(p.get("source"), ""));
     }
 
     private static MacroDescriptor macro(JsonObject m) {

@@ -6,9 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use fancy_regex::Regex;
-use tungsten_ir::{
-    ErrorModel, HttpMethod, Ir, Operation, ParamRole, RuntimeGate, Shape, TypeId, TypeRef,
-};
+use tungsten_ir::{ErrorModel, Ir, Operation, ParamRole, RuntimeGate, Shape, TypeId, TypeRef};
 
 use crate::MockOptions;
 use crate::route::PathPattern;
@@ -139,18 +137,5 @@ impl Model {
 
     pub fn gate_on(&self, gate: &RuntimeGate) -> bool {
         gate.default_on || self.enabled_gates.contains(&gate.env_var)
-    }
-}
-
-pub(crate) fn method_str(method: HttpMethod) -> &'static str {
-    match method {
-        HttpMethod::Get => "GET",
-        HttpMethod::Put => "PUT",
-        HttpMethod::Post => "POST",
-        HttpMethod::Delete => "DELETE",
-        HttpMethod::Options => "OPTIONS",
-        HttpMethod::Head => "HEAD",
-        HttpMethod::Patch => "PATCH",
-        HttpMethod::Trace => "TRACE",
     }
 }

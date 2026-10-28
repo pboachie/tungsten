@@ -20,6 +20,8 @@
 
 pub mod contracts;
 pub mod driver;
+pub mod identity;
+pub mod inspection;
 pub mod suggest;
 pub mod types;
 
@@ -38,6 +40,7 @@ mod resources;
 mod responses;
 mod rpc;
 mod streams;
+mod webhooks;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -50,6 +53,7 @@ use tungsten_openapi::{DocId, Workspace};
 use crate::ctx::{Ctx, pointer, str_of};
 
 pub use driver::{CompileOptions, Compiled, compile_config, compile_project, compile_spec};
+pub use identity::ProjectIdentity;
 
 /// The tungsten version stamped into the IR.
 pub const TUNGSTEN_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -94,6 +98,9 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
     let cfg = input.config;
     let mut cx = Ctx::new(ws, cfg, manifest);
     for ns in &input.namespaces {
+        if ws.is_cancelled() {
+            break;
+        }
         cx.tb
             .add_components(&cfg.inputs[ns.config_index].namespace, ns.doc);
     }
@@ -102,6 +109,9 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
     let mut namespaces = vec![];
     let mut known_ids: BTreeSet<String> = BTreeSet::new();
     for (ns_index, ns) in input.namespaces.iter().enumerate() {
+        if ws.is_cancelled() {
+            break;
+        }
         let name = cfg.inputs[ns.config_index].namespace.as_str();
         let mut ops = operations::build_namespace(&mut cx, &auth, ns_index, ns);
         pagination::apply(&mut cx, &mut ops.callable, &mut ops.planned);
@@ -115,6 +125,7 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
             .collect();
         let errors = errors::build(&mut cx, name, &responses);
         let resources = resources::build(&mut cx, name, ns.doc, ops.callable, &mut ops.planned);
+        let webhooks = webhooks::build(&mut cx, name, ns.doc);
         let doc = &ws.documents[ns.doc];
         let info = |k: &str| {
             doc.root
@@ -135,6 +146,8 @@ pub fn build_with_manifest(input: &BuildInput<'_>, manifest: &str) -> BuildOutpu
             resources,
             planned: ops.planned.into_iter().map(|b| b.op).collect(),
             errors,
+            protocol: None,
+            webhooks,
         });
     }
     check_operation_refs(&mut cx, &known_ids);
@@ -255,7 +268,7 @@ pub mod __testing {
 
     /// The id given to an operation without `operationId`.
     pub fn synthesize_operation_id(method: HttpMethod, path: &str) -> String {
-        crate::names::synthesize_operation_id(method, path)
+        crate::names::synthesize_operation_id(crate::names::method_word(method), path)
     }
 
     /// A Responses Object key as a status.

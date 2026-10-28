@@ -12,8 +12,10 @@ tungsten check
 tungsten generate
 tungsten generate --check
 tungsten ir dump > ir.json
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python "$source_dir/runtimes/python" ./generated/python 'fastapi>=0.115,<1' 'uvicorn>=0.30,<1' 'pyright>=1.1.390,<2'
+uv_binary=$(command -v uv)
+python3 -I "$source_dir/crates/tungsten-cli/src/commands/bootstrap_python.py" --check-uv "$uv_binary"
+"$uv_binary" venv --python 3.12 .venv
+"$uv_binary" pip install --python .venv/bin/python "$source_dir/runtimes/python" ./generated/python 'fastapi>=0.115,<1' 'uvicorn>=0.30,<1' 'pyright>=1.1.390,<2'
 cp "$example_dir/consume.py" consume.py
 printf '%s\n' '{"typeCheckingMode":"strict","pythonVersion":"3.12","venvPath":".","venv":".venv","include":["consume.py"]}' > pyrightconfig.json
 .venv/bin/pyright

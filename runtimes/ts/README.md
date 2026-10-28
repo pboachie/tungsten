@@ -73,22 +73,254 @@ const idempotencyStore = new FileIdempotencyStore("./state/idempotency.json");
 
 Keep `@elysra/tungsten-runtime/node` out of browser bundles. Applications own the storage location and its lifecycle.
 
+## Credential transport
+
+Credentials require HTTPS by default, including OAuth client-credentials, code
+exchange and refresh endpoints. Non-loopback HTTP returns `AUTH_FAILED` before
+sending credentials. Migrate authenticated HTTP services to HTTPS, or explicitly
+opt in with `ClientOptions.allowInsecureHttp = true` for intentional insecure transport.
+This permits cleartext credentials; enable it only for a trusted environment.
+
+The local-development exception covers `localhost` (also with a trailing dot),
+literal IPv4 `127/8`, and IPv6 `::1`. Subdomains, unspecified addresses and
+IPv4-mapped IPv6 addresses require the explicit override. DNS resolution does not
+grant an exception. Anonymous HTTP requests remain supported.
+
+## Opening authorization URLs safely
+
+OAuth authorization helpers return URL data; they do not open a browser. Treat
+provider endpoints and returned URLs as untrusted input. Apply your application's
+URL policy and use a browser or native URL API that treats the complete target as
+literal data. Never interpolate the URL into PowerShell, CMD, POSIX shell or other
+command source, and do not pass it to an opener that does so internally.
+
+Scheme validation alone does not prevent command injection: an ordinary HTTPS
+URL can contain shell expansion characters. Managed OAuth endpoint checks are
+protocol validation, not shell escaping. Explicit low-level compatibility helpers
+retain application-owned URL policy, including custom schemes; their results
+need the same safe integration boundary. Do not silently route a rejected URL or
+failed browser launch through a shell fallback.
+
+These boundaries do not qualify third-party openers, custom integrations or real
+provider/listener behavior. Qualify the application's complete launch path on
+each supported platform, including Windows and WSL.
+
 ## Limits
 
-Stream `collect({ maxBytes, maxMs })` accepts optional byte and time budgets. Setting
-either defaults the other to 4 MiB or 60 seconds. The byte count uses UTF-8
+Multipart bodies: a field whose OpenAPI `encoding` entry declares a
+`contentType` is sent with that media type (the first entry without
+wildcards); a file part's own media type wins. Of the entry's `headers`, only
+those whose schema fixes one value (`const` or a one-value `enum`) are sent,
+on every part of the field; others are not, and neither is positional or
+nested multipart encoding. Unreleased 0.2.0 only.
+
+Incoming webhooks: `verifyWebhook` accepts a body of at most 1 MiB by default
+(`maxBodyBytes`) and a signature header of at most 8192 characters, rejects a signed
+timestamp more than 300 seconds from now by default (`toleranceSeconds`), and supports
+only the Stripe-compatible `t=,v1=` HMAC-SHA256 scheme (`v0` and other schemes
+are ignored). A payload whose arrays and objects nest more than 100 levels deep
+(`MAX_WEBHOOK_JSON_DEPTH`) is rejected as `payload_invalid`, as is one with a `\u` escape that is a lone
+surrogate or a number outside the double range. Replay tracking is the
+application's `claim` hook; the runtime keeps no delivery state. Unreleased 0.2.0 only.
+
+The OAuth 2.0 device authorization flow (OpenAPI 3.2 `deviceAuthorization`) is
+not run by the client: configure the scheme with an access token obtained
+through it.
+
+In unreleased 0.2.0, `ClientCore.exportPages(op, args, checkpoint, opts)` runs a read-only paginated operation as a durable
+export: every page carries a sealed `checkpoint` token and a `complete` flag.
+Persist the token only after the page's items are committed to your sink, and
+pass it back as `checkpoint.resume` after a restart to continue with the next page. A
+crash after the sink commit but before the token is persisted replays that page
+once on resume, so the sink must be idempotent (deduplicate on a stable item
+key); a crash before the commit loses nothing. The token is
+`tgp1.<payload>.<HMAC-SHA-256>` under a caller-held `checkpoint.key` of at least 32
+bytes, and binds the API name, operation, method, path, pagination style and
+position parameter, base URL, `ClientOptions.tenant`, `checkpoint.scope` and every argument except
+the page position, as an HMAC, so no argument value or credential is stored.
+The provider's next-page cursor or URL is stored as is: treat tokens as
+secrets. A token that is malformed, longer than 16384 characters, altered,
+sealed under another key, issued for another operation, other arguments
+(filters, order, page size), base URL, tenant or scope, older than
+`checkpoint.maxAgeMs`, or stopped by a repeated cursor or cross-origin Link is refused
+with `VALIDATION_FAILED` before any request; restarting from the first page is
+always the caller's explicit choice (omit `checkpoint.resume`). When the first resumed
+request fails with 400, 404, 410 or 422, the remediation says the provider's
+cursor may have expired. Cursor, offset, page-number and `Link` traversals can
+resume; checkpoints record a position, not a snapshot, so offset and page
+numbers can skip or repeat items when upstream data changes between runs, and
+only provider cursors that stay valid across sessions resume reliably.
+`maxPages`, cycle detection, deadlines, cancellation and the scheduler apply
+to each run; cycle detection covers the current run only. A token from one
+runtime is not guaranteed to resume in another. `ClientCore.describeCheckpoint(token)` returns the
+operation, style, state, page count and issue time without the cursor, for
+logs and support bundles.
+
+In unreleased 0.2.0, `deadlineMs` (on `ClientOptions` or `CallOptions`) sets a total
+deadline for one logical call, separate from the per-attempt `timeoutMs`. It is
+measured on a monotonic clock and covers authentication, idempotency-key
+reservation, every attempt (each one's `timeoutMs` is cut to the time left),
+retry waits, response bodies and verification; for `pages`, `poll` and
+`runMacro` it covers the whole traversal, poll or macro, and nested work cannot
+restart it. No attempt starts after it expires: the call fails with `code`
+`DEADLINE_EXCEEDED`, and a mutation that was already sent reports
+`OUTCOME_UNKNOWN`, never a blind replay. A retry wait that would end after the
+deadline returns the last failure at once. For `stream()` it bounds connecting
+and each reconnect, never an open stream (use `idleTimeoutMs`). A shared OAuth
+token refresh or idempotency-store write is not cancelled at the deadline, only
+no longer waited for, so other callers still get its result; it stays bounded by
+its own `timeoutMs`. A custom `fetch` that ignores its `AbortSignal` can keep
+running after the deadline. Default: no total deadline.
+
+In unreleased 0.2.0, a whole binary request body also takes an `UploadSource`:
+`UploadSource.oneShot(stream, { length, sha256 })` (a `ReadableStream` or async
+iterable read at most once) or `UploadSource.recreatable(() => stream, ...)` (opened
+again for every attempt). A one-shot body that was read is never sent again: a
+failure that would be retried is returned with a note, and redirects and token
+refresh resends stop. A declared `length` is sent as `Content-Length`; `length` and
+`sha256` are checked against the bytes and the last chunk is held back until they
+match, so a mismatching source fails with `UPLOAD_MISMATCH` before the request
+completes. A source that throws ends the call (`UPLOAD_SOURCE_FAILED`;
+`OUTCOME_UNKNOWN` for a mutation). Operations whose idempotency key or confirmation
+depends on the body (`auto`, `content_hash`, `content_identity`, destructive or
+irreversible) require `sha256`; it is the `content_hash` key, and tokens and keys
+bind to the declared length and SHA-256, never to bytes read for them. Sources are
+refused inside JSON, form and multipart bodies. Ranged or resumable uploads are not
+supported.
+
+In unreleased 0.2.0, `download(op, args, { maxBytes, onProgress })` streams a 2xx
+body instead of buffering it: read the returned `Download` with `read()`, `for
+await`, or `writeTo(sink)`, which awaits the sink before the next read. The body
+is bounded by `maxBytes` (default: no limit; a larger `Content-Length` fails
+before any byte is read, `code` `RESPONSE_TOO_LARGE`), by
+`ClientOptions.idleTimeoutMs` (default `timeoutMs`) between chunks
+(`STREAM_IDLE`) and by `deadlineMs` (`DEADLINE_EXCEEDED`). `maxResponseBytes`
+applies only to error bodies of a download. A body shorter than its
+`Content-Length`, a lost connection, an abort or a sink that throws
+(`SINK_FAILED`) ends it with a failure; for a mutation the failure says the call
+took effect. The connection and its scheduler capacity are held until the body
+ends, fails or `close()` is called. A download is never retried once its answer
+arrived and never resumed. `saveDownload(download, path, { overwrite })` from `@elysra/tungsten-runtime/node`
+writes a download to a file the caller chose: an exclusively created
+`<name>.<random>.part` file next to `path` replaces it only after the whole body
+arrived; on failure the partial file is removed and `path` is untouched. An existing
+`path` fails before any byte is read (`DESTINATION_EXISTS`) unless `overwrite` is
+set; it is checked again before the rename, but a file created in between can be
+replaced on platforms whose rename replaces. The parent directory must exist.
+`Download.filename` is the `Content-Disposition`
+name reduced to a base name without directory parts or control characters; it
+never chooses a destination.
+
+Stream `collect({ maxBytes, maxMs })` accepts optional byte and time budgets. An
+unset budget defaults to 4 MiB or 60 seconds. The byte count uses UTF-8
 JSON for the event values, excluding SSE framing. A limit closes the stream
 and returns a nonretryable error with only the admitted events as `partial`.
-Calling `collect()` with no arguments preserves unbounded collection.
+Calling `collect()` with no arguments uses both defaults; pass larger finite budgets, or
+iterate / `reduce` / `on` for long or large streams.
 
-Set `ClientOptions.maxResponseBytes` to opt into an ordinary-response byte cap;
-a call option with the same name overrides it. The value must be a positive
-safe integer (at most 9007199254740991); unset keeps the existing unbounded
-behavior. Content-Length is checked before reading, and actual bytes are
-counted even without that header. Overflow closes the body and returns
-`UNEXPECTED_RESPONSE` with code `RESPONSE_TOO_LARGE` and `retryable: never`.
-A mutation may have taken effect: inspect API state before retrying. The cap
-does not limit a successful SSE stream; use its event and collection limits.
+In unreleased 0.2.0, schema `minLength` and `maxLength` count Unicode code points, as
+JSON Schema does: an emoji outside the Basic Multilingual Plane is one character, and a
+lone surrogate counts as one. A schema `pattern` that the JavaScript engine (with or without the `u` flag) cannot compile is not
+enforced: the value is accepted and the client reports a `PATTERN_UNCHECKED` diagnostic
+(`failed_parameter`, the pattern and the reason, never the value) through
+`onDiagnostic`, once per call, path and pattern. For an untagged union, diagnostics come from the first variant that accepts the value, including patterns nested in it, even when a later variant would also accept it; rejected variants do not produce them. Generated Zod schemas count code points through `withLength` rather than Zod's UTF-16 `.min`/`.max`. Calling a validator directly, without
+a client, stays silent. The server still validates the pattern.
+
+In unreleased 0.2.0, ordinary buffered responses default to **4 MiB (4,194,304 bytes) per response**.
+Set `ClientOptions.maxResponseBytes` to choose a finite client cap; the call option with the same
+native name overrides it. Omitted/null values inherit the default or client cap,
+not an unlimited mode. Values must be positive safe integers (at most
+9007199254740991), validated before authentication, storage and preview effects.
+This covers ordinary success/error bodies, server previews, each page and each
+verification read. A page cap does not bound collecting many pages.
+
+Content-Length can reject an oversized representation early; actual delivered
+bytes are counted even without it. HEAD/204/205/304 metadata alone does not
+consume the budget, but any body bytes a transport delivers are still counted.
+Overflow closes the owned body and returns `UNEXPECTED_RESPONSE`, code
+`RESPONSE_TOO_LARGE`, with `retryable: never`. A mutation may have taken effect:
+inspect API state before retrying. The cap is separate from OAuth token-response
+and successful SSE event/collection budgets.
+
+The default HTTP stack supplies decoded bytes when it decompresses a response.
+The cap limits accepted body bytes; parsers, copies and HTTP decoders can allocate
+more. Custom transports must stream nonempty bodies and honor cancellation;
+their own buffering, decoding and settlement behavior need separate qualification.
+A custom fetch must honor the Response contract: a null body means empty; nonempty bodies need a readable stream.
+
+In unreleased 0.2.0, a client can bound its outbound requests with an opt-in
+request scheduler (`ClientOptions.scheduler`, a `RequestScheduler` or its options). Without one, every call is sent at
+once, as before. With one, each scope (the client's `tenant` plus the request
+origin, or the tenant alone with scope `"scheduler"`) allows at most `maxActive`
+ordinary attempts and `maxStreams` event streams in flight (default: `maxActive`),
+and at most `maxQueued` more of each waiting in first-in-first-out order (default
+100) for at most `maxQueueMs` (default 30 seconds; the call's own deadline and
+cancellation also end the wait). A request that cannot be admitted is never
+sent and fails with `RATE_LIMITED`, code `QUEUE_FULL`, `QUEUE_TIMEOUT` or
+`RATE_LIMIT_PAUSED`, or with `TRANSPORT_FAILED`, code `SCHEDULER_CLOSED`, after
+the scheduler was closed; the retry loop does not retry these. A permit covers
+one attempt with its redirects and body read, is released before a retry
+delay, and an event stream holds its permit until the stream is closed.
+Authentication token requests are not scheduled. A `RATE_LIMITED` answer
+pauses its scope for its `Retry-After` (one second when it names none) plus up
+to 10 % (at most one second) of random spread; afterwards one request per kind
+probes the quota until an answer that is not rate limited arrives. One
+scheduler can be shared by several clients; scopes never share capacity,
+queues or pauses, and nothing is coordinated across processes. Closing a
+scheduler rejects waiting and later requests; requests in flight keep their
+capacity until they finish, which `drained` waits for. Custom transports remain
+owned by the application and are not closed by the scheduler.
+Retries are not budgeted unless `retryRatio` (0 to 1) is set: then each scope
+keeps a retry budget that starts at `retryReserve` (default 10), gains `retryRatio`
+per call (up to `retryReserve` + 100 × `retryRatio`) and loses one per retry. A retry
+the budget cannot pay for is not made; the call returns its last failure.
+Optionally, `maxActiveTotal` and `maxStreamsTotal` cap ordinary requests and event streams in
+flight across every scope, on top of each scope's `maxActive` and `maxStreams` (default:
+no cap across scopes). Scopes waiting for that shared capacity take turns, one
+request each, in scope order, so one busy tenant or origin cannot starve another.
+For queue telemetry, the optional scheduler observer `onEvent` is called
+synchronously (in Python and Rust outside the scheduler's lock) with version-1
+events: `admitted` and `rejected` (with `wait_ms`, and `reason` and `pause_ms`
+for a rejection), `released` (`held_ms`), `paused` (`pause_ms`) and
+`retry_denied`. Every `admitted` is followed by one `released`; a request
+granted just as its wait was abandoned may be reported `rejected` (`aborted`) and
+`released`. Events carry no scope key, tenant, URL or payload, so they hold no
+secret and few distinct values; nothing is buffered, and an observer's
+exception or panic is ignored. Read `stats()` for current counts.
+See the [bulk-sync example](https://github.com/pboachie/tungsten/tree/main/examples/bulk-sync).
+
+In unreleased 0.2.0, a client can report local telemetry for `call()` to an
+opt-in observer (`ClientOptions.telemetry`, a function or an object with `onEvent`). It is off by default and the runtime never sends
+telemetry anywhere. Each operation gets a `call_id`; events (`schema_version`
+1) mark `operation.start`/`operation.end`, `attempt.start`/`attempt.end` per
+attempt sent, and `phase` events for authentication (`auth`), request
+scheduler admission (`queue`, with `reason` `admitted`, `full`, `timeout`,
+`paused`, `closed`, `deadline` or `cancelled`) and the wait before a retry
+(`retry_backoff`). Each end carries `duration_ms` and an `outcome`: `ok`,
+`error` (with the diagnostic `category`), `cancelled`, `deadline_exceeded`, or
+`outcome_unknown` when a mutation may have taken effect. Events hold only the
+API name, operation id, enumerated values, HTTP status codes, attempt numbers
+and durations: never URLs, headers, bodies, argument values, credentials,
+confirmation tokens, tenant labels or error text. The observer is called
+synchronously and never awaited; one that throws or rejects never changes the call.
+`MemoryTelemetryCollector` keeps the newest events up to a capacity (default 1024, at most
+65536) and counts the ones it dropped. `preview()`, `pages()` and `poll()` are reported as
+operations too (`entry` `preview`, `pages`, `poll`): one `pages` or `poll`
+operation covers every request it made, with attempts numbered across it,
+and a page iteration the caller stops before its end is reported as
+`cancelled`. Only a `call` operation's end carries the final `http_status`.
+`stream()` is one `stream` operation covering its connection and every
+reconnect, with attempts numbered across them; it ends with the stream: `ok`
+at its end, `error` with its final failure item, `cancelled` when the caller
+cancels or leaves it early. Page exports are `export_pages`
+operations like `pages`; a `download` operation ends when the answer is
+handed over (reading the body is not part of it). A macro run or
+preview is one `macro` or `macro_preview` operation named after the macro,
+covering every step, with attempts numbered across the steps.
+`openTelemetryObserver(tracer)` turns the events into one OpenTelemetry client
+span per operation (attempts and phases as span events, outcome attributes,
+error status on failure) for any object shaped like an `@opentelemetry/api`
+`Tracer`; the runtime has no OpenTelemetry dependency.
 
 The core package is browser-safe; the separate `/node` adapter requires Node.js. No file-backed OAuth token store is provided.
 
@@ -101,3 +333,63 @@ The core package is browser-safe; the separate `/node` adapter requires Node.js.
 ## License
 
 Apache-2.0. The Tungsten compiler is licensed separately under AGPL-3.0-only.
+
+## Managed browser OAuth
+
+`await flow.authorizationUrl({sessionBinding, s256Supported: true,
+issuerDefense: {kind: "issuerResponse", issuer}})` creates an independent
+S256 PKCE/state attempt and returns an `OAuthResult<AuthorizationAttempt>`.
+Keep `value.attemptHandle` in the owning browser session or native listener;
+open `value.url`, then call `await flow.exchangeCode({attemptHandle,
+callbackUrl, sessionBinding})` with the entire callback URL. Never log that URL.
+An `issuerResponse` defense requires an exact `iss` even on denial. A provider
+without that response parameter needs the explicit
+`{kind: "distinctRedirect", qualification}` strategy: the application must
+qualify a different, exactly registered callback URI for each issuer. Missing
+`iss` never activates this alternative automatically. S256 support must be
+qualified against the provider before use.
+
+Attempts expire after ten monotonic minutes. Admission is limited to 32 pending
+or exchanging attempts, 32 KiB of captured UTF-8 strings, and 64 entries each
+for scopes and extra parameters. Callback URLs and decoded fields have a
+16 KiB budget and at most 64 parameters; duplicates and malformed percent/UTF-8
+encodings fail before any token request. Managed redirect URIs must be absolute,
+without credentials, query or fragment. Protected fields in endpoint queries
+or `extra` are refused. A valid denial or claimed exchange consumes its handle;
+ambiguous failures require a new authorization attempt. Unknown handles refuse.
+
+Use `flow.cancelAuthorization(attemptHandle, sessionBinding)` to cancel and
+`await flow.logout()` to remove local tokens and invalidate pending attempts.
+A canceled exchange retains admission while its transport/store work runs.
+Custom uninterruptible work may outlive cancellation or transport timeout;
+its result cannot commit after invalidation. Garbage collection releases secret
+references; physical memory zeroization is not guaranteed.
+
+The default `MemoryTokenStore` implements atomic fencing. A custom managed store
+must implement both `setIfCurrent(scheme, token, predicate)` and
+`deleteIfCurrent(scheme, predicate)`, passing its currently stored token to the
+predicate exactly once at the final serialized write/removal. The callback
+advances a private credential-mutation epoch; speculative checks, retries and an
+await between callback and mutation violate the contract. Return true only after
+commit; on failure retain the previous token and return false or throw. A failed
+commit after callback may conservatively invalidate older refresh work. Default
+refresh compares both token identity and mutation epoch. Unsupported stores fail
+closed. These are per-client session guarantees; shared multi-account storage,
+partitioning, remote revocation and persistent transactions require a separate
+application adapter. Concurrent completed logins select the last successful
+token-store commit; an old refresh cannot replace a newer login, even when the
+provider reissues identical token strings. Ordinary external/low-level store
+writes bypass the managed epoch; use logout and a new managed session when
+replacing credentials outside these helpers. Refresh flights are keyed by epoch
+and limited to 32 owned jobs, retained until settlement.
+
+Code/refresh response bodies default to 65,536 bytes, independently of ordinary
+API call limits. `ClientOptions.maxOAuthTokenResponseBytes` accepts a positive
+safe integer for provider compatibility. The cap bounds decoded body bytes,
+not JSON decoder heap usage or a custom store's settlement time. Client-credentials
+response budgets are separate. Provider acceptance is application-specific.
+
+`lowLevelAuthorizationUrl` and `lowLevelExchangeCode` are explicit compatibility
+primitives for applications that independently implement PKCE, CSRF, callback
+and issuer validation. They provide no managed attempt guarantee and must not
+be used as a login default. `pkce()` remains a low-level primitive.

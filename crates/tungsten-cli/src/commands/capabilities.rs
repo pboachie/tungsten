@@ -1,0 +1,330 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//! Offline declaration query; never discovers or executes external emitters.
+
+use std::fmt::Write as _;
+use tungsten_config::capabilities::{self, CapabilityCatalog};
+
+use crate::args::{CapabilitiesArgs, MatrixFormat};
+use crate::output::{CliError, CommandName, CommandResult, ErrorKind};
+use crate::{Report, exit};
+
+pub(crate) fn run(args: &CapabilitiesArgs) -> Report {
+    let mut report = Report::new(CommandName::Capabilities);
+    let mut conflicts = capabilities::validate();
+    conflicts.extend(super::init_preset::undeclared());
+    if !conflicts.is_empty() {
+        return report.failed(
+            exit::INTERNAL,
+            CliError::new(
+                ErrorKind::Internal,
+                format!(
+                    "conflicting capability declarations: {}",
+                    conflicts.join("; ")
+                ),
+            ),
+        );
+    }
+    let targets = match args.target.as_deref() {
+        None => capabilities::TARGETS.to_vec(),
+        Some(name) => match capabilities::target(name) {
+            Some(target) => vec![target.clone()],
+            None => return report.failed(exit::USAGE, CliError::new(
+                ErrorKind::Usage, format!("unknown built-in target `{name}`"),
+            ).with_help("run `tungsten capabilities` to list built-in targets; external emitters are not inspected by this command")),
+        },
+    };
+    let result = CapabilityCatalog {
+        capability_version: capabilities::VERSION,
+        targets,
+        features: capabilities::FEATURES.to_vec(),
+        openapi_inputs: capabilities::OPENAPI_INPUTS.to_vec(),
+        input_formats: capabilities::INPUT_FORMATS.to_vec(),
+        execution_policy: capabilities::execution_policy(),
+        init: capabilities::INIT,
+        protocols: capabilities::PROTOCOLS.to_vec(),
+        workspace: capabilities::WORKSPACE,
+    };
+    if args.matrix {
+        report.human = match args.format {
+            MatrixFormat::Human => matrix(&result),
+            MatrixFormat::Markdown => format!("{MATRIX_START}\n{}{MATRIX_END}\n", matrix(&result)),
+        };
+        report.result = Some(CommandResult::Capabilities(result));
+        return report;
+    }
+    report.human = format!(
+        "tungsten target capabilities (contract {})\n",
+        result.capability_version
+    );
+    for target in &result.targets {
+        let _ = writeln!(
+            report.human,
+            "  {:<12} {:?}; imported-operation policy: {}",
+            target.id, target.source_support, target.imported_operation_policy
+        );
+        if !target.features.is_empty() {
+            let _ = writeln!(report.human, "    features: {}", target.features.join(", "));
+        }
+        for requirement in target.prerequisites {
+            let _ = writeln!(
+                report.human,
+                "    {} {}",
+                requirement.tool,
+                requirement.description()
+            );
+        }
+        for record in target.evidence {
+            let _ = writeln!(
+                report.human,
+                "    evidence ({}): {} <{}>",
+                snake(&record.scope),
+                record.combination,
+                record.reference
+            );
+        }
+    }
+    report
+        .human
+        .push_str(&openapi_human(&result.openapi_inputs));
+    report.human.push_str("Input formats\n");
+    for format in &result.input_formats {
+        let _ = writeln!(
+            report.human,
+            "  {:<18} {}{}",
+            format.id,
+            snake(&format.route),
+            if format.imported_operations {
+                "; operations imported"
+            } else {
+                ""
+            }
+        );
+    }
+    report.human.push_str("Source declarations only; qualification, platform and artifact evidence are unknown unless a record is listed. Use doctor for local prerequisites.\n");
+    report.result = Some(CommandResult::Capabilities(result));
+    report
+}
+
+/// The supported OpenAPI lines, shared with `doctor`.
+pub(crate) fn openapi_human(inputs: &[capabilities::OpenApiVersionCapability]) -> String {
+    let mut out = String::from("OpenAPI input versions\n");
+    for input in inputs {
+        let _ = writeln!(out, "  {:<12} {:?}", input.line, input.support);
+        for feature in input.supported_features {
+            let _ = writeln!(
+                out,
+                "    compiled  {}: {}",
+                feature.member, feature.behavior
+            );
+        }
+        if !input.unsupported_features.is_empty() {
+            let _ = writeln!(
+                out,
+                "    {} constructs diagnosed, not compiled (error unless marked ignored):",
+                input.unsupported_features.len()
+            );
+        }
+        for feature in input.unsupported_features {
+            let _ = writeln!(
+                out,
+                "    {} {:<9} {}",
+                feature.diagnostic,
+                format!("{:?}", feature.policy).to_lowercase(),
+                feature.member
+            );
+        }
+    }
+    out
+}
+
+/// Markers delimiting the generated block in README.md; the
+/// `check-support-matrix.py` CI script compares the block with this output.
+pub(crate) const MATRIX_START: &str = "<!-- tungsten-capabilities-matrix:start -->";
+pub(crate) const MATRIX_END: &str = "<!-- tungsten-capabilities-matrix:end -->";
+
+/// The public support matrix: one row per target, every cell derived from
+/// the catalog so documentation cannot drift from the declarations.
+fn matrix(catalog: &CapabilityCatalog) -> String {
+    let mut out = format!(
+        "<!-- generated by `tungsten capabilities --matrix` (contract {}) -->\n\n",
+        catalog.capability_version
+    );
+    out.push_str("| Target | Aliases | Emits | Consumer toolchain | Runs on | Features | Imported-operation policy | Qualification | Artifacts |\n");
+    out.push_str("|---|---|---|---|---|---|---|---|---|\n");
+    for target in &catalog.targets {
+        let aliases = if target.aliases.is_empty() {
+            "".to_string()
+        } else {
+            target
+                .aliases
+                .iter()
+                .map(|alias| format!("`{alias}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let tools = if target.prerequisites.is_empty() {
+            "none".to_string()
+        } else {
+            target
+                .prerequisites
+                .iter()
+                .map(|requirement| {
+                    let mut text = format!("{} {}", requirement.tool, requirement.description());
+                    if let Some(option) = requirement.minimum_option {
+                        let _ = write!(text, " (`{option}` selects the minimum)");
+                    }
+                    text
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        };
+        let environments = target
+            .execution_environments
+            .iter()
+            .map(snake)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let features = target
+            .features
+            .iter()
+            .map(|feature| format!("`{feature}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = writeln!(
+            out,
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} |",
+            target.id,
+            aliases,
+            target.summary,
+            tools,
+            environments,
+            features,
+            match (target.source_support, target.imported_operation_policy) {
+                (capabilities::SourceSupport::Reserved, _) => "n/a",
+                (_, true) => "enforced",
+                (_, false) => "refused (TG0705)",
+            },
+            snake(&target.qualification),
+            snake(&target.artifact_availability),
+        );
+    }
+    out.push_str("\n| Feature | Domain | Opt-in option | Description |\n|---|---|---|---|\n");
+    for feature in &catalog.features {
+        let _ = writeln!(
+            out,
+            "| `{}` | {} | {} | {} |",
+            feature.id,
+            snake(&feature.domain),
+            feature
+                .option
+                .map_or_else(String::new, |option| format!("`{option}`")),
+            feature.description
+        );
+    }
+    out.push_str("\n| OpenAPI line | Support | Diagnosed constructs |\n|---|---|---|\n");
+    for input in &catalog.openapi_inputs {
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} |",
+            input.line,
+            snake(&input.support),
+            input.unsupported_features.len()
+        );
+    }
+    out.push_str("\n| Input format | Versions | Route | Detection | Operations | Review flags | Acquisition |\n|---|---|---|---|---|---|---|\n");
+    for format in &catalog.input_formats {
+        let _ = writeln!(
+            out,
+            "| `{}` | {} | {} | {} | {} | {} | {} |",
+            format.id,
+            format.versions.join(", "),
+            snake(&format.route),
+            format.detection,
+            if format.imported_operations {
+                "imported"
+            } else {
+                "native"
+            },
+            format
+                .review_flags
+                .iter()
+                .map(|flag| format!("`{flag}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            format
+                .acquisition
+                .iter()
+                .map(snake)
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    out.push_str(
+        "\n| IR protocol | Status | Targets | Protocol-specific extension |\n|---|---|---|---|\n",
+    );
+    for protocol in &catalog.protocols {
+        let targets = match protocol.targets {
+            capabilities::protocols::ProtocolTargets::AllBuiltIn => "every built-in target".into(),
+            capabilities::protocols::ProtocolTargets::Only([]) => "none (refused, TG0706)".into(),
+            capabilities::protocols::ProtocolTargets::Only(ids) => ids
+                .iter()
+                .map(|id| format!("`{id}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
+        let _ = writeln!(
+            out,
+            "| `{}` | {} | {} | {} |",
+            protocol.id,
+            snake(&protocol.status),
+            targets,
+            protocol.extension
+        );
+    }
+    let code = |ids: &[&str]| {
+        ids.iter()
+            .map(|id| format!("`{id}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let _ = write!(
+        out,
+        "\n| `init` selection | Targets |\n|---|---|\n\
+         | Default (`--targets` omitted) | {} |\n\
+         | Wizard default | {} |\n\
+         | Local setup (`--local-example`, wizard) | {}, and `{}` (Rust SDK and CLI) |\n",
+        code(catalog.init.default_targets),
+        code(catalog.init.wizard_default_targets),
+        code(catalog.init.local_setup_targets),
+        catalog.init.cli_alias,
+    );
+    for preset in catalog.init.presets {
+        let _ = writeln!(
+            out,
+            "| `--preset {}`{} | {} |",
+            preset.name,
+            if preset.strict { " (`--strict`)" } else { "" },
+            code(preset.targets)
+        );
+    }
+    for companion in catalog.init.companions {
+        let _ = writeln!(
+            out,
+            "| Selecting `{}` adds | `{}` |",
+            companion.target, companion.requires
+        );
+    }
+    out.push_str(
+        "\nSource declarations only: a declared feature or environment is not \
+        qualification, and `unknown` evidence never becomes a compatibility claim.\n",
+    );
+    out
+}
+
+/// The serialized (snake_case) name of a unit enum variant.
+fn snake<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default()
+}

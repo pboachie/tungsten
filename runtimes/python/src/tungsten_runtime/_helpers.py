@@ -33,7 +33,25 @@ from ._util import (
 from .sentinels import UNSET
 from .types import OperationDescriptor, ParamDescriptor
 
-METHODS = frozenset({"GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE"})
+METHODS = frozenset({"GET", "PUT", "POST", "DELETE", "OPTIONS", "HEAD", "PATCH", "TRACE", "QUERY"})
+_METHOD_TOKEN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+_FORBIDDEN_METHODS = frozenset({"CONNECT", "TRACK"})
+
+
+def is_method(method: object) -> bool:
+    """A standard method, or an OpenAPI 3.2 custom method token that is not a case variant of one and not forbidden."""
+    if not isinstance(method, str):
+        return False
+    if method in METHODS:
+        return True
+    upper = method.upper()
+    return (
+        _METHOD_TOKEN.fullmatch(method) is not None
+        and upper not in METHODS
+        and upper not in _FORBIDDEN_METHODS
+    )
+
+
 SAFETIES = frozenset({"read_only", "mutating", "destructive", "irreversible"})
 POLICIES = frozenset({"none", "auto", "caller_owned", "content_hash", "content_identity"})
 ENCODINGS = frozenset({"json", "form", "multipart", "bytes", "text"})
@@ -60,7 +78,7 @@ def descriptor_problem(op: object) -> str | None:
     op_id = op.get("id")
     if not isinstance(op_id, str) or op_id == "":
         return "`id` must be a non-empty string"
-    if op.get("method") not in METHODS:
+    if not is_method(op.get("method")):
         return "`method` must be an HTTP method"
     if not isinstance(op.get("path"), str):
         return "`path` must be a string"
@@ -100,6 +118,8 @@ def descriptor_problem(op: object) -> str | None:
             return "`stream.done` must be a string"
         if "flag" in stream and not isinstance(stream["flag"], str):
             return "`stream.flag` must be a string"
+        if "text" in stream and not isinstance(stream["text"], bool):
+            return "`stream.text` must be a boolean"
     if not is_array(op.get("responses")):
         return "`responses` must be a list"
     if not is_array(op.get("security")):
@@ -370,6 +390,10 @@ def sent_arguments(op: OperationDescriptor, args: Mapping[str, object]) -> str:
 
 
 def int_like(value: float) -> int | float:
+    # ``int.is_integer`` exists only from Python 3.12; an int (bool included)
+    # is already integral, so it never reaches the float path.
+    if isinstance(value, int):
+        return int(value)
     return int(value) if math.isfinite(value) and value.is_integer() else value
 
 

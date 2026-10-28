@@ -2,6 +2,8 @@
 //! Sending with tier-aware retries, classification of the answer into a
 //! result or an envelope, and OAuth2 client-credentials tokens.
 
+use crate::telemetry::{Pending, PendingKind};
+use crate::{TelemetryOutcome, TelemetryPhase, TelemetryQueueReason};
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -21,6 +23,7 @@ use crate::expr::{describe_predicate, evaluate_expr, resolve_ref};
 use crate::helpers::{sent_arguments, with_arguments, with_wire_names};
 use crate::idempotency::has_replay_protection;
 use crate::prepare::{Prepared, Step, fail, with_auth_query};
+use crate::scheduler::{Kind, Rejection};
 use crate::serialize::Payload;
 use crate::serialize::encode_component;
 use crate::stream::{Sent, StreamStart};
@@ -51,6 +54,17 @@ fn retryable_category(category: Category) -> bool {
 
 const EMPTY_PAYLOAD: &Payload = &Payload::Empty;
 
+/// Which 2xx answers [`ClientCore::send_with`] returns unread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Handover {
+    /// None: every body is read.
+    Buffered,
+    /// A `text/event-stream` body (an event stream).
+    Events,
+    /// Any body (a download), which holds an ordinary request's capacity.
+    Bytes,
+}
+
 impl ClientCore {
     pub(crate) fn check_send_deadline(
         &self,
@@ -67,11 +81,16 @@ impl ClientCore {
                     key_header: &prepared.key_header,
                     attempts,
                     check,
+                    unreplayed: false,
                 };
                 return Err(fail(scrub_diagnostic(
                     outcome_unknown(
                         &ctx,
-                        "The polling budget expired after a request was possibly sent.",
+                        if crate::verify::call_deadline_expired() {
+                            "The operation deadline expired after a request was possibly sent."
+                        } else {
+                            "The polling budget expired after a request was possibly sent."
+                        },
                         UnknownFields::default(),
                     ),
                     &prepared.secrets,
@@ -100,7 +119,7 @@ impl ClientCore {
         request_url: &mut String,
         sink: Option<&mut (dyn BodySink + '_)>,
     ) -> Step<Response<Option<Value>>> {
-        match self.send_with(prepared, opts, false, sink).await? {
+        match self.send_with(prepared, opts, Handover::Buffered, sink).await? {
             Sent::Response(response, url) => {
                 *request_url = url;
                 Ok(response)
@@ -116,16 +135,19 @@ impl ClientCore {
         }
     }
 
-    /// Send with retries. With `stream`, a 2xx `text/event-stream` answer is
-    /// returned unread as [`Sent::Stream`]; every other answer is classified
-    /// as usual.
+    /// Send with retries. With [`Handover::Events`], a 2xx
+    /// `text/event-stream` answer is returned unread as [`Sent::Stream`];
+    /// with [`Handover::Bytes`], any 2xx answer with a body (a download).
+    /// Every other answer is classified as usual.
     pub(crate) async fn send_with(
         &self,
         prepared: &Prepared<'_>,
         opts: &CallOptions,
-        stream: bool,
+        handover: Handover,
         mut sink: Option<&mut (dyn BodySink + '_)>,
     ) -> Step<Sent> {
+        let stream = handover == Handover::Events;
+        let download = handover == Handover::Bytes;
         let op = prepared.op;
         let retries = self.retry_options(op);
         let mutation = is_mutation(op);
@@ -141,6 +163,7 @@ impl ClientCore {
             .pairs()
             .map(|(n, v)| (n.to_owned(), v.to_owned()))
             .collect();
+        let span = crate::telemetry::current();
         let mut attempts: u32 = 0;
         loop {
             self.check_send_deadline(prepared, attempts, check.as_ref())?;
@@ -160,6 +183,63 @@ impl ClientCore {
                 m.on_request(&ctx);
             }
             self.check_send_deadline(prepared, attempts, check.as_ref())?;
+            let queued = span.as_ref().map(|span| span.attempt() + 1);
+            let queue = Pending::new(
+                span.as_ref().filter(|_| self.inner.scheduler.is_some()),
+                PendingKind::Phase(TelemetryPhase::Queue, queued),
+            );
+            let mut permit = match self.admit(prepared, stream).await {
+                Ok(permit) => {
+                    let start = queue.done();
+                    if permit.is_some()
+                        && let Some(span) = &span
+                    {
+                        span.phase(
+                            TelemetryPhase::Queue,
+                            start,
+                            None,
+                            false,
+                            queued,
+                            Some(TelemetryQueueReason::Admitted),
+                        );
+                    }
+                    if permit.is_some()
+                        && attempts == 1
+                        && let Some(scheduler) = &self.inner.scheduler
+                    {
+                        scheduler.record_call(&self.scope_key(prepared));
+                    }
+                    permit
+                }
+                Err(rejected) => {
+                    // A wait ended by the call's deadline reports that.
+                    let rejected = self
+                        .check_send_deadline(prepared, attempts, check.as_ref())
+                        .err()
+                        .unwrap_or(rejected);
+                    let start = queue.done();
+                    if let Some(span) = &span {
+                        span.phase(
+                            TelemetryPhase::Queue,
+                            start,
+                            Some(&rejected.diagnostic),
+                            false,
+                            queued,
+                            Some(crate::telemetry::queue_reason(Some(&rejected.diagnostic))),
+                        );
+                    }
+                    return Err(rejected);
+                }
+            };
+            self.check_send_deadline(prepared, attempts, check.as_ref())?;
+            let attempt_number = span.as_ref().map(|span| span.next_attempt());
+            if let (Some(span), Some(n)) = (&span, attempt_number) {
+                span.attempt_start(n);
+            }
+            let sending = Pending::new(
+                span.as_ref(),
+                PendingKind::Attempt(attempt_number.unwrap_or(0)),
+            );
             // Redirects are never followed by the HTTP client: it would
             // forward custom credential headers (API keys, CSRF headers) to
             // another origin. A read follows same-origin redirects here; a
@@ -167,6 +247,11 @@ impl ClientCore {
             let mut url = prepared.url.clone();
             let mut method = prepared.method;
             let mut body: &Payload = &prepared.payload;
+            let upload = match &prepared.payload {
+                Payload::Upload(source) => Some(source.clone()),
+                _ => None,
+            };
+            let mut uploading = upload.as_ref().map(crate::upload::UploadSource::attempt);
             let mut headers = real_headers.clone();
             let mut outcome = attempt(
                 &self.inner.http,
@@ -177,7 +262,9 @@ impl ClientCore {
                     body,
                     timeout,
                     stream,
-                    idle: self.inner.idle_timeout.filter(|_| stream),
+                    download,
+                    upload: uploading.as_ref(),
+                    idle: self.inner.idle_timeout.filter(|_| stream || download),
                     max_response_bytes: opts.max_response_bytes.or(self.inner.max_response_bytes),
                 },
             )
@@ -186,6 +273,9 @@ impl ClientCore {
                 prepared.may_have_sent.store(true, Ordering::Relaxed);
             }
             let mut hops = 0;
+            // Set when a redirect is not followed because the one-shot upload
+            // cannot be sent again.
+            let mut unreplayed = false;
             while !self.inner.redirects_disabled && !mutation && hops < MAX_REDIRECTS {
                 let AttemptOutcome::Response {
                     status,
@@ -209,11 +299,24 @@ impl ClientCore {
                 };
                 let rewrite = !matches!(status, 307 | 308)
                     && !matches!(method, HttpMethod::Get | HttpMethod::Head);
+                // A streamed body is read again for the redirect, never
+                // replayed from a spent one-shot source.
+                if !rewrite && upload.as_ref().is_some_and(|source| !source.sendable()) {
+                    unreplayed = true;
+                    break;
+                }
+                uploading = upload
+                    .as_ref()
+                    .filter(|_| !rewrite)
+                    .map(crate::upload::UploadSource::attempt);
                 url = next;
                 if rewrite {
                     method = HttpMethod::Get;
                     body = EMPTY_PAYLOAD;
-                    headers.retain(|(n, _)| !n.eq_ignore_ascii_case("content-type"));
+                    headers.retain(|(n, _)| {
+                        !n.eq_ignore_ascii_case("content-type")
+                            && !n.eq_ignore_ascii_case("content-length")
+                    });
                 }
                 ctx.url = shown;
                 ctx.method = method;
@@ -227,7 +330,9 @@ impl ClientCore {
                         body,
                         timeout,
                         stream,
-                        idle: self.inner.idle_timeout.filter(|_| stream),
+                        download,
+                        upload: uploading.as_ref(),
+                        idle: self.inner.idle_timeout.filter(|_| stream || download),
                         max_response_bytes: opts
                             .max_response_bytes
                             .or(self.inner.max_response_bytes),
@@ -246,23 +351,69 @@ impl ClientCore {
                 key_header: &prepared.key_header,
                 attempts,
                 check: check.as_ref(),
+                unreplayed,
             };
-            let error = match self.classify_response(
-                &call_ctx,
-                prepared,
+            let responded = matches!(
                 outcome,
-                &ctx,
-                timeout,
-                sink.as_deref_mut(),
-            ) {
+                AttemptOutcome::Response { .. } | AttemptOutcome::Streaming { .. }
+            );
+            let rejected = uploading
+                .as_ref()
+                .and_then(|sent| crate::upload::attempt_failure(&call_ctx, sent, mutation));
+            let classified = match rejected {
+                Some(error) => Err(error),
+                None => self.classify_response(
+                    &call_ctx,
+                    prepared,
+                    outcome,
+                    &ctx,
+                    timeout,
+                    sink.as_deref_mut(),
+                ),
+            };
+            let error = match classified {
                 Ok(mut sent) => {
+                    let start = sending.done();
+                    if let (Some(span), Some(n)) = (&span, attempt_number) {
+                        let status = match &sent {
+                            Sent::Response(response, _) => response.meta.status,
+                            Sent::Stream(start) => start.meta.status,
+                        };
+                        span.attempt_end(n, start, None, false, Some(status));
+                    }
+                    if let Some(mut permit) = permit.take() {
+                        permit.settle(None);
+                        // An open event stream or download keeps its capacity until it is dropped.
+                        if let Sent::Stream(ref mut start) = sent {
+                            start.body.hold(permit);
+                        }
+                    }
                     if let Sent::Response(_, ref mut effective) = sent {
                         *effective = url;
                     }
                     return Ok(sent);
                 }
-                Err(error) => error,
+                Err(error) => {
+                    let start = sending.done();
+                    if let (Some(span), Some(n)) = (&span, attempt_number) {
+                        span.attempt_end(
+                            n,
+                            start,
+                            Some(&error.diagnostic),
+                            false,
+                            error.diagnostic.http_status,
+                        );
+                    }
+                    error
+                }
             };
+            if let Some(mut permit) = permit.take() {
+                if error.diagnostic.category == Category::RateLimited {
+                    permit.settle(Some(error.diagnostic.retry_after_ms));
+                } else if responded {
+                    permit.settle(None);
+                }
+            }
             let Error {
                 diagnostic,
                 partial,
@@ -282,6 +433,9 @@ impl ClientCore {
             {
                 return Err(done(diagnostic, partial));
             }
+            if upload.as_ref().is_some_and(|source| !source.sendable()) {
+                return Err(crate::upload::one_shot_spent(done(diagnostic, partial)));
+            }
             let delay_ms = match diagnostic.retry_after_ms {
                 Some(after) if retries.honor_retry_after => {
                     if after as f64 > retries.max_ms {
@@ -300,11 +454,79 @@ impl ClientCore {
                     }
                 }
             };
+            // Callers sharing a quota share one retry budget.
+            if let Some(scheduler) = &self.inner.scheduler
+                && !scheduler.allow_retry(&self.scope_key(prepared))
+            {
+                return Err(done(diagnostic, partial));
+            }
             for m in &self.inner.middleware {
                 m.on_retry(&ctx, &diagnostic);
             }
             self.check_send_deadline(prepared, attempts, check.as_ref())?;
-            tokio::time::sleep(crate::util::duration_from_ms(delay_ms)).await;
+            let delay = crate::util::duration_from_ms(delay_ms);
+            // A retry that could not start before the deadline is not waited for.
+            if crate::verify::call_deadline()
+                .is_some_and(|deadline| std::time::Instant::now() + delay >= deadline)
+            {
+                if let Some(span) = &span {
+                    span.phase_outcome(
+                        TelemetryPhase::RetryBackoff,
+                        std::time::Instant::now(),
+                        TelemetryOutcome::DeadlineExceeded,
+                        attempt_number,
+                        None,
+                    );
+                }
+                return Err(done(diagnostic, partial));
+            }
+            let backoff = Pending::new(
+                span.as_ref(),
+                PendingKind::Phase(TelemetryPhase::RetryBackoff, attempt_number),
+            );
+            tokio::time::sleep(delay).await;
+            let start = backoff.done();
+            if let Some(span) = &span {
+                span.phase(
+                    TelemetryPhase::RetryBackoff,
+                    start,
+                    None,
+                    false,
+                    attempt_number,
+                    None,
+                );
+            }
+        }
+    }
+
+    fn scope_key(&self, prepared: &Prepared<'_>) -> String {
+        self.inner
+            .scheduler
+            .as_ref()
+            .map(|s| s.scope_key(&prepared.url, self.inner.tenant.as_deref()))
+            .unwrap_or_default()
+    }
+
+    /// Wait for scheduler capacity for one attempt: `None` without a
+    /// scheduler; an error (nothing is sent) when no capacity was given.
+    async fn admit(
+        &self,
+        prepared: &Prepared<'_>,
+        stream: bool,
+    ) -> Step<Option<crate::scheduler::Permit>> {
+        let Some(scheduler) = &self.inner.scheduler else {
+            return Ok(None);
+        };
+        let key = self.scope_key(prepared);
+        let core = self.clone();
+        let random = std::sync::Arc::new(move || core.random());
+        let kind = if stream { Kind::Stream } else { Kind::Call };
+        match scheduler
+            .acquire(&key, kind, crate::verify::effective_deadline(), random)
+            .await
+        {
+            Ok(permit) => Ok(Some(permit)),
+            Err(rejection) => Err(fail(rejected(&prepared.op.id, rejection, stream))),
         }
     }
 
@@ -369,6 +591,25 @@ impl ClientCore {
                         .build()
                 }));
             }
+            AttemptOutcome::Timeout
+                if crate::verify::call_deadline().is_some_and(|deadline| {
+                    std::time::Instant::now() + std::time::Duration::from_millis(1) >= deadline
+                }) =>
+            {
+                let cause = "The operation deadline expired before a response arrived.";
+                return Err(fail(if mutation {
+                    outcome_unknown(call_ctx, cause, UnknownFields::default())
+                } else {
+                    Diag::new(op.id.clone(), Category::UpstreamUnavailable)
+                        .code(Some("DEADLINE_EXCEEDED".to_owned()))
+                        .retryable(Retryable::Never)
+                        .remediation(format!(
+                            "{cause} This read has no side effects; call again with a larger `deadline`."
+                        ))
+                        .attempts(attempts)
+                        .build()
+                }));
+            }
             AttemptOutcome::Timeout => {
                 let ms = timeout.as_millis();
                 return Err(fail(if mutation {
@@ -414,7 +655,7 @@ impl ClientCore {
                         request_id,
                         attempts,
                     },
-                    body,
+                    body: *body,
                 }));
             }
         };
@@ -513,6 +754,10 @@ impl ClientCore {
                     format!(
                         "The server answered with a redirect{to}. Redirects are disabled; check redirects and base_url."
                     )
+                } else if call_ctx.unreplayed {
+                    format!(
+                        "The server answered with a redirect{to} that would need the upload body sent again. The body is one-shot and was already read, so it cannot be re-sent and the redirect was not followed; pass UploadSource::recreatable(...) so it can be read again, or call the redirect target directly."
+                    )
                 } else {
                     format!(
                         "The server answered with a redirect{to} that leaves the API's origin (or too many redirects). It is not followed, so credentials never leave the API's host; check base_url."
@@ -552,6 +797,10 @@ impl ClientCore {
             && is_json_body(&bytes, &headers, declared_media)
             && sink.take(&bytes, mode != ValidateResponses::Off)
         {
+            let notes = sink.take_notes();
+            self.report_unchecked(&op.id, Category::UnexpectedResponse, &notes, |path| {
+                format!("response{}", crate::unchecked::path_text(path))
+            });
             return Ok(Sent::Response(
                 Response {
                     value: None,
@@ -598,8 +847,14 @@ impl ClientCore {
             );
         } else if mode != ValidateResponses::Off
             && let (Some(validator), Some(value)) = (&op.response, decoded.value.as_ref())
-            && let crate::types::Validation::Invalid(issues) =
-                crate::validate::judge(validator.as_ref(), value)
+            && let (judged, notes) = crate::validate::judge_noted(validator.as_ref(), value)
+            && {
+                self.report_unchecked(&op.id, Category::UnexpectedResponse, &notes, |path| {
+                    format!("response{}", crate::unchecked::path_text(path))
+                });
+                true
+            }
+            && let crate::types::Validation::Invalid(issues) = judged
         {
             let issue = issues.first();
             let path: Vec<String> = issue
@@ -818,14 +1073,52 @@ impl ClientCore {
         None
     }
 
-    /// Fetch (and cache) an OAuth2 client-credentials token.
+    /// Fetch (and cache) an OAuth2 client-credentials token. The fetch is
+    /// its own task: a caller whose deadline passes, or whose future is
+    /// dropped, stops waiting without cancelling a fetch others share.
     async fn oauth_token(&self, client: OAuthClient<'_>) -> std::result::Result<String, String> {
+        if crate::auth::insecure_http(client.token_url, self.inner.allow_insecure_http) {
+            return Err(crate::auth::INSECURE_HTTP_AUTH.to_owned());
+        }
+        let core = self.clone();
+        let name = client.name.to_owned();
+        let token_url = client.token_url.to_owned();
+        let scopes = client.scopes.to_vec();
+        let client_id = client.client_id.to_owned();
+        let client_secret = client.client_secret.to_owned();
+        let fetch = async move {
+            core.fetch_client_token(OAuthClient {
+                name: &name,
+                token_url: &token_url,
+                scopes: &scopes,
+                client_id: &client_id,
+                client_secret: &client_secret,
+            })
+            .await
+        };
+        match crate::verify::detached(fetch).await {
+            Ok(result) => result,
+            Err(crate::verify::Abandoned::Expired) => Err(format!(
+                "The operation deadline expired while fetching the OAuth2 token for {}.",
+                client.name
+            )),
+            Err(crate::verify::Abandoned::Stopped) => Err(format!(
+                "The OAuth2 token fetch for {} stopped before it finished; call again.",
+                client.name
+            )),
+        }
+    }
+
+    async fn fetch_client_token(
+        &self,
+        client: OAuthClient<'_>,
+    ) -> std::result::Result<String, String> {
         // Short map locks; only refreshes of this scheme wait for each other.
         let gate = {
             let mut gates = self.inner.oauth_refreshes.lock().await;
             gates.entry(client.name.to_owned()).or_default().clone()
         };
-        // Dropping a cancelled owner releases this gate; another waiter can retry.
+        // Fetches run as detached tasks, so a caller dropping out never holds this gate.
         let _refresh = gate.lock().await;
         let cache = self.inner.oauth_tokens.lock().await;
         let real_now = std::time::SystemTime::now()
@@ -868,6 +1161,8 @@ impl ClientCore {
                 body: &body,
                 timeout: self.inner.timeout.max(Duration::from_millis(1)),
                 stream: false,
+                download: false,
+                upload: None,
                 idle: None,
                 max_response_bytes: None,
             },
@@ -966,5 +1261,32 @@ fn resolve_lost(
                 .collect(),
         ),
         other => other.clone(),
+    }
+}
+
+/// The envelope of a request the scheduler did not admit; nothing was sent.
+fn rejected(operation: &str, rejection: Rejection, stream: bool) -> Diagnostic {
+    let what = if stream { "event streams" } else { "requests" };
+    let limit = if stream { "max_streams" } else { "max_active" };
+    let diag = |category| Diag::new(operation.to_owned(), category);
+    match rejection {
+        Rejection::Full => diag(Category::RateLimited)
+            .code(Some("QUEUE_FULL".to_owned()))
+            .remediation(format!("The client's queue of {what} waiting for capacity is full (SchedulerOptions::max_queued); nothing was sent. Retry after calls in flight finish, or raise max_queued or {limit}."))
+            .build(),
+        Rejection::Timeout => diag(Category::RateLimited)
+            .code(Some("QUEUE_TIMEOUT".to_owned()))
+            .remediation(format!("No capacity for {what} became free within the queue wait (SchedulerOptions::max_queue) or the call's deadline; nothing was sent. Retry later, or raise max_queue or {limit}."))
+            .build(),
+        Rejection::Paused(ms) => diag(Category::RateLimited)
+            .code(Some("RATE_LIMIT_PAUSED".to_owned()))
+            .retry_after_ms(Some(ms))
+            .remediation("An earlier call sharing this quota was rate limited, and the pause outlasts this call's queue wait or deadline; nothing was sent. Wait retry_after_ms before calling again.")
+            .build(),
+        Rejection::Closed => diag(Category::TransportFailed)
+            .code(Some("SCHEDULER_CLOSED".to_owned()))
+            .retryable(Retryable::Never)
+            .remediation("The request scheduler was closed (shutdown); nothing was sent. Use a client with an open scheduler.")
+            .build(),
     }
 }

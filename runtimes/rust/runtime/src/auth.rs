@@ -9,6 +9,45 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 
+pub(crate) const INSECURE_HTTP_AUTH: &str = "Refusing to send credentials over non-loopback HTTP. Use HTTPS, or set ClientOptions.allow_insecure_http = true for intentional insecure transport. Nothing was sent.";
+
+pub(crate) fn credential_header(
+    api: &ApiDescriptor,
+    name: &str,
+    preserved_idempotency: bool,
+) -> bool {
+    (!preserved_idempotency && crate::util::looks_sensitive(name))
+        || ["authorization", "proxy-authorization", "cookie"]
+        .iter()
+        .any(|header| name.eq_ignore_ascii_case(header))
+        || api.auth.iter().any(|scheme| match scheme {
+            AuthSchemeDescriptor::ApiKey { location: ApiKeyLocation::Header, wire, .. } => wire.eq_ignore_ascii_case(name),
+            AuthSchemeDescriptor::Composite { parts, .. } => parts.iter().any(|part| matches!(part,
+                CompositePart::Header { name: wire, from_config: None, .. } if wire.eq_ignore_ascii_case(name))),
+            _ => false,
+        })
+}
+
+pub(crate) fn insecure_http(target: &str, allow: bool) -> bool {
+    if allow {
+        return false;
+    }
+    let Ok(url) = url::Url::parse(target) else {
+        return false;
+    };
+    if url.scheme() != "http" {
+        return false;
+    }
+    !match url.host() {
+        Some(url::Host::Domain(host)) => {
+            host.eq_ignore_ascii_case("localhost") || host.eq_ignore_ascii_case("localhost.")
+        }
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
 use crate::serialize::base64_text;
 use crate::types::{
     ApiDescriptor, ApiKeyLocation, AuthConfig, AuthSchemeDescriptor, CompositePart, Credential,
@@ -70,7 +109,11 @@ pub trait TokenSource: Sync {
 pub fn is_safe_method(method: HttpMethod) -> bool {
     matches!(
         method,
-        HttpMethod::Get | HttpMethod::Head | HttpMethod::Options | HttpMethod::Trace
+        HttpMethod::Get
+            | HttpMethod::Head
+            | HttpMethod::Options
+            | HttpMethod::Trace
+            | HttpMethod::Query
     )
 }
 
@@ -491,12 +534,13 @@ async fn apply(
 
 /// Resolve the credentials for `op`. Never fails: a problem is an
 /// `AuthResolution::Failed` with its remediation.
-pub async fn resolve_auth(
+pub(crate) async fn resolve_auth_transport(
     api: &ApiDescriptor,
     op: &OperationDescriptor,
     auth: &AuthConfig,
     method: HttpMethod,
     tokens: &dyn TokenSource,
+    credential_error: Option<&str>,
 ) -> AuthResolution {
     let security = &op.security;
     if security.is_empty() {
@@ -528,6 +572,13 @@ pub async fn resolve_auth(
             }
         }
         if missing.is_empty() {
+            if !satisfiers.is_empty()
+                && let Some(remediation) = credential_error
+            {
+                return AuthResolution::Failed {
+                    remediation: remediation.to_owned(),
+                };
+            }
             let mut plan = AuthPlan::default();
             let mut secrets = Vec::new();
             let mut oauth = None;

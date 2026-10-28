@@ -181,6 +181,9 @@ type Variant struct {
 
 type Discriminator struct {
 	Property string `json:"property"`
+	// DefaultMapping is the type ID of the variant an object selects when
+	// its tag is missing or maps to no variant (OpenAPI 3.2 defaultMapping).
+	DefaultMapping string `json:"default_mapping"`
 }
 
 // Shape is an IR shape; Kind selects the members that apply.
@@ -298,9 +301,15 @@ type Body struct {
 }
 
 type BodyContent struct {
-	MediaType string  `json:"media_type"`
-	Ty        TypeRef `json:"ty"`
-	Encoding  string  `json:"encoding"`
+	MediaType string         `json:"media_type"`
+	Ty        TypeRef        `json:"ty"`
+	Encoding  string         `json:"encoding"`
+	Parts     []PartEncoding `json:"parts"`
+}
+
+type PartEncoding struct {
+	Name        string  `json:"name"`
+	ContentType *string `json:"content_type"`
 }
 
 type StatusMatch struct {

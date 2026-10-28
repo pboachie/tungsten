@@ -2,7 +2,10 @@
 //! Request bodies and media-type content (`Body`, `BodyContent`). One entry per media type, in spec order.
 
 use serde_json::Value;
-use tungsten_ir::{Body, BodyContent, BodyEncoding, Primitive, Shape, TypeRef};
+use tungsten_core::Diagnostic;
+use tungsten_ir::{
+    Body, BodyContent, BodyEncoding, PartEncoding, PartHeader, Primitive, Shape, TypeRef,
+};
 use tungsten_openapi::RefTarget;
 
 use crate::ctx::{Ctx, child, doc, flag, str_of};
@@ -138,8 +141,41 @@ pub(crate) fn content(
     };
     let several = map.len() > 1;
     let mut out = vec![];
+    let reads_3_2 = !request && crate::pathitem::reads_3_2(cx.ws, &map_at);
     for media_type in map.keys() {
-        let schema = child(&child(&map_at, media_type), "schema");
+        let media_at = media_at(cx, &map_at, media_type);
+        // A 3.2 response `itemSchema` the compiler supports stands in for
+        // `schema`: the type of one JSON line or of one event's data.
+        let item = reads_3_2
+            .then(|| cx.get(&media_at).and_then(Value::as_object))
+            .flatten()
+            .and_then(|m| tungsten_openapi::response_item_schema(media_type, m));
+        let entry_at = child(&map_at, media_type);
+        if item.is_none()
+            && media_at.doc != entry_at.doc
+            && crate::pathitem::reads_3_2(cx.ws, &media_at)
+            && cx
+                .get(&media_at)
+                .is_some_and(|m| m.get("itemSchema").is_some())
+        {
+            // A reusable media type of another document: its own scan leaves
+            // `itemSchema` to the use, which only the build sees.
+            cx.report(
+                Diagnostic::error(
+                    "TG0145",
+                    "the referenced media type uses OpenAPI 3.2 `itemSchema` in a way that is not supported here",
+                )
+                .with_help("only response JSON Lines items and server-sent events whose `data` has a JSON `contentSchema` are compiled; otherwise describe the whole payload with `schema`"),
+                &child(&entry_at, "$ref"),
+            );
+        }
+        let schema = match item {
+            Some(suffix) => RefTarget {
+                doc: media_at.doc,
+                pointer: format!("{}{suffix}", media_at.pointer),
+            },
+            None => child(&media_at, "schema"),
+        };
         let declared = cx.get(&schema).map(|_| &schema);
         let mut encoding = content_encoding(cx, media_type, declared);
         let lines_as_bytes = request && encoding == BodyEncoding::Jsonl;
@@ -157,13 +193,117 @@ pub(crate) fn content(
             }
             None => schemaless(encoding),
         };
+        let parts = if request && encoding == BodyEncoding::Multipart {
+            part_encodings(cx, &media_at)
+        } else {
+            vec![]
+        };
         out.push(BodyContent {
             media_type: media_type.clone(),
             ty,
             encoding,
+            parts,
         });
     }
     out
+}
+
+/// The `encoding` map of the multipart Media Type Object at `media_at`: the
+/// entries whose `contentType` names a concrete media type or that declare a
+/// header with a fixed value. Keys that name no property of the schema are
+/// kept; runtimes only read the parts a value carries.
+fn part_encodings(cx: &Ctx<'_>, media_at: &RefTarget) -> Vec<PartEncoding> {
+    let encoding_at = child(media_at, "encoding");
+    let Some(Value::Object(map)) = cx.get(&encoding_at) else {
+        return vec![];
+    };
+    map.iter()
+        .filter_map(|(name, encoding)| {
+            let content_type = str_of(encoding, "contentType").and_then(concrete_media_type);
+            let headers = part_headers(cx, &child(&child(&encoding_at, name), "headers"));
+            (content_type.is_some() || !headers.is_empty()).then(|| PartEncoding {
+                name: name.clone(),
+                content_type,
+                headers,
+            })
+        })
+        .collect()
+}
+
+/// The headers of an Encoding Object's `headers` map at `at` whose schema
+/// fixes one scalar value. `Content-Type` (which the spec says to ignore
+/// there) and `Content-Disposition` (which names the part) are skipped, and
+/// so are names that are not header tokens and values a header cannot carry.
+fn part_headers(cx: &Ctx<'_>, at: &RefTarget) -> Vec<PartHeader> {
+    let Some(Value::Object(map)) = cx.get(at) else {
+        return vec![];
+    };
+    map.keys()
+        .filter(|name| {
+            !name.eq_ignore_ascii_case("content-type")
+                && !name.eq_ignore_ascii_case("content-disposition")
+                && !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+        })
+        .filter_map(|name| {
+            let (header_at, _) = cx.deref_value(&child(at, name))?;
+            let (_, schema) = cx.deref_value(&child(&header_at, "schema"))?;
+            let fixed = match (schema.get("const"), schema.get("enum")) {
+                (Some(value), _) => value,
+                (None, Some(Value::Array(values))) if values.len() == 1 => &values[0],
+                _ => return None,
+            };
+            let value = match fixed {
+                Value::String(text) => text.clone(),
+                Value::Number(_) | Value::Bool(_) => fixed.to_string(),
+                _ => return None,
+            };
+            value
+                .bytes()
+                .all(|b| b == b'\t' || (0x20..0x7f).contains(&b))
+                .then(|| PartHeader {
+                    name: name.clone(),
+                    value,
+                })
+        })
+        .collect()
+}
+
+/// The first entry of a comma-separated `contentType` list that is a valid
+/// media type without wildcards, normalized to lower-case type and subtype.
+fn concrete_media_type(list: &str) -> Option<String> {
+    list.split(',').map(str::trim).find_map(|entry| {
+        let (essence, params) = entry.split_once(';').unwrap_or((entry, ""));
+        let (kind, subtype) = essence.trim().split_once('/')?;
+        let token = |t: &str| {
+            !t.is_empty()
+                && t != "*"
+                && t.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+                && !t.contains('*')
+        };
+        if !token(kind)
+            || !token(subtype)
+            || !params
+                .bytes()
+                .all(|b| b == b'\t' || (0x20..0x7f).contains(&b))
+        {
+            return None;
+        }
+        let essence = format!(
+            "{}/{}",
+            kind.to_ascii_lowercase(),
+            subtype.to_ascii_lowercase()
+        );
+        let params = params.trim();
+        Some(if params.is_empty() {
+            essence
+        } else {
+            format!("{essence}; {params}")
+        })
+    })
 }
 
 /// The media type and schema of the first JSON media type of `owner`'s
@@ -171,11 +311,18 @@ pub(crate) fn content(
 pub(crate) fn json_schema(cx: &Ctx<'_>, owner: &RefTarget) -> Option<(String, RefTarget)> {
     let map_at = child(owner, "content");
     let map = cx.get(&map_at)?.as_object()?;
-    map.iter()
-        .filter(|(_, entry)| entry.get("schema").is_some())
-        .map(|(media, _)| (media, child(&child(&map_at, media), "schema")))
+    map.keys()
+        .map(|media| (media, child(&media_at(cx, &map_at, media), "schema")))
+        .filter(|(_, schema)| cx.get(schema).is_some())
         .find(|(media, schema)| content_encoding(cx, media, Some(schema)) == BodyEncoding::Json)
         .map(|(media, schema)| (media.clone(), schema))
+}
+
+/// The Media Type Object of `media` in the `content` map at `map_at`,
+/// following an OpenAPI 3.2 `$ref` to a reusable media type.
+pub(crate) fn media_at(cx: &Ctx<'_>, map_at: &RefTarget, media: &str) -> RefTarget {
+    let at = child(map_at, media);
+    cx.deref(&at).unwrap_or(at)
 }
 
 fn encoding_word(encoding: BodyEncoding) -> &'static str {

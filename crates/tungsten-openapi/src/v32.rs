@@ -1,0 +1,612 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//! OpenAPI 3.2 constructs that have no 3.1 equivalent.
+//!
+//! A 3.2 document that uses only 3.1 constructs goes through the unchanged
+//! 3.1 path. The build compiles the `query` method (as `QUERY`), reusable
+//! media types (`components.mediaTypes`, `$ref` in a `content` map, followed
+//! like any other reference), response `itemSchema` where
+//! [`response_item_schema`] places it, and a discriminator's
+//! `defaultMapping`. Security requirements that name a scheme by URI are
+//! resolved by the build (TG0151 when the URI names no scheme), and the OAuth
+//! 2.0 `deviceAuthorization` flow is kept like the other flows. Every other construct 3.2 added is either refused with an
+//! error (when ignoring it would produce a client that behaves differently
+//! from the API) or reported as a warning (when it only adds metadata the
+//! compiler has no use for). Nothing is dropped silently. Codes
+//! `TG0140`-`TG0156` form one family, one code per feature, each located at
+//! the member that introduces it.
+//!
+//! `additionalOperations` entries are compiled too, as custom methods sent
+//! as written; only tokens that cannot be sent are refused (TG0142). `$self`
+//! is accepted when it cannot change how references resolve (TG0140
+//! otherwise).
+
+use std::collections::HashSet;
+
+use serde_json::{Map, Value};
+use tungsten_core::Diagnostic;
+
+use crate::join_pointer;
+use crate::spans::SpanIndex;
+use crate::walk::{Kind, Node, walk};
+
+/// One 3.2-only construct found in a document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Finding {
+    pub code: &'static str,
+    pub warning: bool,
+    pub pointer: String,
+    pub message: String,
+    pub help: &'static str,
+}
+
+impl Finding {
+    pub(crate) fn into_diagnostic(self, file: &str, spans: &SpanIndex) -> Diagnostic {
+        let diagnostic = if self.warning {
+            Diagnostic::warning(self.code, self.message)
+        } else {
+            Diagnostic::error(self.code, self.message)
+        };
+        diagnostic
+            .with_help(self.help)
+            .at(file, &self.pointer, spans.nearest(&self.pointer))
+    }
+}
+
+/// JSON Lines media types: one JSON value per line.
+const JSON_LINES: &[&str] = &[
+    "application/jsonl",
+    "application/x-jsonl",
+    "application/ndjson",
+    "application/x-ndjson",
+];
+
+/// The fields of one server-sent event (`data`, `event`, `id`, `retry`).
+const EVENT_FIELDS: &[&str] = &["data", "event", "id", "retry"];
+
+/// Keywords an event `itemSchema` may use besides `properties`.
+const EVENT_KEYWORDS: &[&str] = &[
+    "type",
+    "properties",
+    "required",
+    "title",
+    "description",
+    "$comment",
+];
+
+fn essence(media_type: &str) -> String {
+    media_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn is_json(media_type: &str) -> bool {
+    let essence = essence(media_type);
+    essence == "application/json" || essence.ends_with("+json")
+}
+
+/// Where a response media type's OpenAPI 3.2 `itemSchema` keeps the type of
+/// one item, relative to the Media Type Object, when the compiler supports
+/// it:
+///
+/// - JSON Lines (`application/jsonl` and its aliases): `/itemSchema` is the
+///   type of one line, as `schema` is for these media types in 3.1.
+/// - `text/event-stream` whose item is an event object with a `data` string
+///   of JSON (`contentMediaType` JSON plus `contentSchema`):
+///   `/itemSchema/properties/data/contentSchema` is the event type.
+/// - `text/event-stream` whose `data` is plain text (a string without
+///   `contentMediaType`, or with a `text/*` one, and no `contentSchema`):
+///   [`TEXT_EVENT_DATA`], the string schema of `data`, is the event type,
+///   and the data is not decoded as JSON.
+///
+/// The other event fields (`event`, `id`, `retry`) carry no type.
+///
+/// `None` for every other use, including a media type that declares
+/// `schema` too; TG0145 reports those.
+pub fn response_item_schema(media_type: &str, media: &Map<String, Value>) -> Option<&'static str> {
+    let item = media.get("itemSchema")?;
+    if media.get("schema").is_some() || !item.is_object() {
+        return None;
+    }
+    let essence = essence(media_type);
+    if JSON_LINES.contains(&essence.as_str()) {
+        return Some("/itemSchema");
+    }
+    if essence != "text/event-stream" {
+        return None;
+    }
+    let item = item.as_object()?;
+    let shaped = item.keys().all(|k| EVENT_KEYWORDS.contains(&k.as_str()))
+        && item
+            .get("type")
+            .is_none_or(|t| t.as_str() == Some("object"));
+    let properties = item.get("properties")?.as_object()?;
+    if !shaped
+        || !properties
+            .keys()
+            .all(|k| EVENT_FIELDS.contains(&k.as_str()))
+    {
+        return None;
+    }
+    let data = properties.get("data")?.as_object()?;
+    let string = data
+        .get("type")
+        .is_none_or(|t| t.as_str() == Some("string"));
+    if !string {
+        return None;
+    }
+    match data.get("contentMediaType") {
+        Some(Value::String(m)) if is_json(m) => data
+            .contains_key("contentSchema")
+            .then_some("/itemSchema/properties/data/contentSchema"),
+        Some(Value::String(m)) if m.trim_start().to_ascii_lowercase().starts_with("text/") => {
+            (!data.contains_key("contentSchema")).then_some(TEXT_EVENT_DATA)
+        }
+        None if !data.contains_key("contentSchema") => Some(TEXT_EVENT_DATA),
+        _ => None,
+    }
+}
+
+/// What [`response_item_schema`] returns for an event stream whose `data`
+/// is text rather than JSON: the `data` string schema itself, which is the
+/// event type.
+pub const TEXT_EVENT_DATA: &str = "/itemSchema/properties/data";
+
+const IGNORED: &str = "the compiler does not use it; remove it to silence this warning";
+
+fn error(code: &'static str, pointer: String, message: &str, help: &'static str) -> Finding {
+    Finding {
+        code,
+        warning: false,
+        pointer,
+        message: message.to_string(),
+        help,
+    }
+}
+
+fn warning(code: &'static str, pointer: String, message: &str) -> Finding {
+    Finding {
+        code,
+        warning: true,
+        pointer,
+        message: message.to_string(),
+        help: IGNORED,
+    }
+}
+
+/// Findings of a whole 3.2 document, in document order. `root` is the
+/// document after overlays.
+pub(crate) fn scan_document(root: &Value) -> Vec<Finding> {
+    let mut out = vec![];
+    let Value::Object(doc) = root else {
+        return out;
+    };
+    if let Some(identity) = doc.get("$self") {
+        self_findings(identity, root, &mut out);
+    }
+    if let Some(Value::Array(tags)) = doc.get("tags") {
+        for (i, tag) in tags.iter().enumerate() {
+            if let Value::Object(tag) = tag {
+                tag_findings(&join_pointer("/tags", &i.to_string()), tag, &mut out);
+            }
+        }
+    }
+    server_findings("/servers", doc.get("servers"), &mut out);
+    walk(root, "", Kind::Document, |node| {
+        node_findings(node, &mut out);
+        referenced_item_schema(root, node, &mut out);
+        true
+    });
+    out
+}
+
+/// TG0145 at a Media Type Object `$ref` into this document whose target uses
+/// `itemSchema` in a way the compiler does not support where it is used. A
+/// reusable media type (`components.mediaTypes`) is checked at each use,
+/// because its media type is the key of the `content` map that refers to it.
+fn referenced_item_schema(root: &Value, node: &Node<'_>, out: &mut Vec<Finding>) {
+    if node.kind != Kind::MediaType {
+        return;
+    }
+    let Some(target) = node
+        .reference()
+        .and_then(Value::as_str)
+        .and_then(|r| r.strip_prefix('#'))
+        .and_then(crate::refs::percent_decode)
+        .and_then(|p| root.pointer(&p))
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    if !target.contains_key("itemSchema") {
+        return;
+    }
+    let supported = node.parent == Some(Kind::Response)
+        && node.pointer.rsplit_once('/').is_some_and(|(_, key)| {
+            let media_type = key.replace("~1", "/").replace("~0", "~");
+            response_item_schema(&media_type, target).is_some()
+        });
+    if !supported {
+        out.push(error(
+            "TG0145",
+            join_pointer(&node.pointer, "$ref"),
+            "the referenced media type uses OpenAPI 3.2 `itemSchema` in a way that is not supported here",
+            "only response JSON Lines items and server-sent events whose `data` has a JSON `contentSchema` are compiled; otherwise describe the whole payload with `schema`",
+        ));
+    }
+}
+
+/// Findings of the subtree of a fragment at `pointer`, read as `kind`.
+/// Whole document-only members are checked separately by `scan_document`.
+pub(crate) fn scan_subtree(value: &Value, pointer: &str, kind: Kind) -> Vec<Finding> {
+    let mut out = vec![];
+    walk(value, pointer, kind, |node| {
+        node_findings(node, &mut out);
+        true
+    });
+    out
+}
+
+/// Remember which findings were already reported, so that a subtree reached
+/// by several references reports each construct once.
+#[derive(Debug, Default)]
+pub(crate) struct Reported(HashSet<(usize, String, &'static str)>);
+
+impl Reported {
+    pub(crate) fn first(&mut self, doc: usize, finding: &Finding) -> bool {
+        self.0.insert((doc, finding.pointer.clone(), finding.code))
+    }
+}
+
+fn tag_findings(pointer: &str, tag: &Map<String, Value>, out: &mut Vec<Finding>) {
+    for key in ["parent", "kind"] {
+        if tag.contains_key(key) {
+            out.push(warning(
+                "TG0153",
+                join_pointer(pointer, key),
+                &format!("the OpenAPI 3.2 tag `{key}` field (tag hierarchy) is ignored"),
+            ));
+        }
+    }
+    if tag.contains_key("summary") {
+        out.push(warning(
+            "TG0156",
+            join_pointer(pointer, "summary"),
+            "the OpenAPI 3.2 tag `summary` field is ignored",
+        ));
+    }
+}
+
+fn server_findings(pointer: &str, servers: Option<&Value>, out: &mut Vec<Finding>) {
+    let Some(Value::Array(servers)) = servers else {
+        return;
+    };
+    for (i, server) in servers.iter().enumerate() {
+        if server.get("name").is_some() {
+            out.push(warning(
+                "TG0156",
+                join_pointer(&join_pointer(pointer, &i.to_string()), "name"),
+                "the OpenAPI 3.2 server `name` field is ignored",
+            ));
+        }
+    }
+}
+
+fn node_findings(node: &Node<'_>, out: &mut Vec<Finding>) {
+    let map = node.value;
+    let at = |key: &str| join_pointer(&node.pointer, key);
+    match node.kind {
+        Kind::Document => {}
+        Kind::PathItem => {
+            if let Some(extra) = map.get("additionalOperations") {
+                additional_operations(&at("additionalOperations"), extra, out);
+            }
+            server_findings(&at("servers"), map.get("servers"), out);
+        }
+        Kind::Operation => {
+            server_findings(&at("servers"), map.get("servers"), out);
+        }
+        Kind::Parameter => {
+            if map.get("in").and_then(Value::as_str) == Some("querystring") {
+                querystring_findings(&node.pointer, map, out);
+            }
+            if map.get("style").and_then(Value::as_str) == Some("cookie")
+                && map.get("in").and_then(Value::as_str) != Some("cookie")
+            {
+                out.push(error(
+                    "TG0144",
+                    at("style"),
+                    "the OpenAPI 3.2 `cookie` parameter style applies only to `in: cookie` parameters",
+                    "use `style: cookie` on a cookie parameter, or the default style of this location",
+                ));
+            }
+        }
+        Kind::MediaType => {
+            // A reusable media type of this document is checked where it is
+            // used (`referenced_item_schema`, or the build for a use from
+            // another document).
+            let reusable = node.parent == Some(Kind::Document);
+            let supported = reusable
+                || node.parent == Some(Kind::Response)
+                    && node.pointer.rsplit_once('/').is_some_and(|(_, key)| {
+                        let media_type = key.replace("~1", "/").replace("~0", "~");
+                        response_item_schema(&media_type, map).is_some()
+                    });
+            if map.contains_key("itemSchema") && !supported {
+                out.push(error(
+                    "TG0145",
+                    at("itemSchema"),
+                    "this use of OpenAPI 3.2 `itemSchema` (sequential and streaming media types) is not supported",
+                    "only response JSON Lines items and server-sent events whose `data` has a JSON `contentSchema`, written in the response's `content` map, are compiled; otherwise describe the whole payload with `schema`",
+                ));
+            }
+            for key in ["prefixEncoding", "itemEncoding"] {
+                if map.contains_key(key) {
+                    out.push(error(
+                        "TG0146",
+                        at(key),
+                        &format!(
+                            "OpenAPI 3.2 positional multipart encoding (`{key}`) is not supported"
+                        ),
+                        "name the parts with `encoding`, which 3.1 defines",
+                    ));
+                }
+            }
+        }
+        Kind::Encoding => {
+            for key in ["encoding", "prefixEncoding", "itemEncoding"] {
+                if map.contains_key(key) {
+                    out.push(error(
+                        "TG0147",
+                        at(key),
+                        &format!(
+                            "OpenAPI 3.2 nested encoding (`{key}` in an Encoding Object) is not supported"
+                        ),
+                        "describe the part as one opaque value with a `contentType`",
+                    ));
+                }
+            }
+        }
+        Kind::Response => {
+            if map.contains_key("summary") && !map.contains_key("$ref") {
+                out.push(warning(
+                    "TG0156",
+                    at("summary"),
+                    "the OpenAPI 3.2 response `summary` field is ignored",
+                ));
+            }
+        }
+        Kind::Example => {
+            for key in ["dataValue", "serializedValue"] {
+                if map.contains_key(key) {
+                    out.push(warning(
+                        "TG0154",
+                        at(key),
+                        &format!("the OpenAPI 3.2 example `{key}` field is ignored"),
+                    ));
+                }
+            }
+        }
+        Kind::Link => server_findings_single(&node.pointer, map.get("server"), out),
+        Kind::SecurityScheme => {
+            if map.contains_key("oauth2MetadataUrl") {
+                out.push(warning(
+                    "TG0152",
+                    at("oauth2MetadataUrl"),
+                    "the OpenAPI 3.2 `oauth2MetadataUrl` is ignored; no server metadata is discovered",
+                ));
+            }
+            if map.contains_key("deprecated") {
+                out.push(warning(
+                    "TG0156",
+                    at("deprecated"),
+                    "the OpenAPI 3.2 security scheme `deprecated` field is ignored",
+                ));
+            }
+        }
+        Kind::Schema => {
+            if let Some(Value::Object(xml)) = map.get("xml")
+                && xml.contains_key("nodeType")
+            {
+                out.push(warning(
+                    "TG0155",
+                    join_pointer(&at("xml"), "nodeType"),
+                    "the OpenAPI 3.2 XML `nodeType` field is ignored",
+                ));
+            }
+        }
+        Kind::Header | Kind::RequestBody | Kind::Callback => {}
+    }
+}
+
+/// An OpenAPI 3.2 `querystring` parameter is compiled when its `content` is
+/// one `application/x-www-form-urlencoded` media type; the build checks that
+/// its schema is an object and that it is the operation's only query
+/// parameter.
+fn querystring_findings(pointer: &str, map: &Map<String, Value>, out: &mut Vec<Finding>) {
+    const HELP: &str = "describe the query string as one `application/x-www-form-urlencoded` object under `content`, or as separate `query` parameters";
+    let content = map.get("content").and_then(Value::as_object);
+    let media = content
+        .filter(|c| c.len() == 1)
+        .and_then(|c| c.keys().next());
+    let form = media.is_some_and(|m| {
+        m.split(';').next().is_some_and(|m| {
+            m.trim()
+                .eq_ignore_ascii_case("application/x-www-form-urlencoded")
+        })
+    });
+    if form {
+        return;
+    }
+    let (at, message) = match media {
+        Some(m) => (
+            join_pointer(&join_pointer(pointer, "content"), m),
+            format!(
+                "an OpenAPI 3.2 `querystring` parameter with media type `{m}` is not supported; only `application/x-www-form-urlencoded` is"
+            ),
+        ),
+        None => (
+            join_pointer(pointer, "in"),
+            "an OpenAPI 3.2 `querystring` parameter needs `content` with exactly one media type"
+                .to_string(),
+        ),
+    };
+    out.push(error("TG0143", at, &message, HELP));
+}
+
+/// `$self` is compiled when it cannot change what a reference of the
+/// document resolves to: the document has no relative reference to another
+/// document, or `$self` names a file in the document's own directory. Any
+/// other `$self`, and references that name the document by its `$self` URI,
+/// are refused (TG0140): tungsten resolves references against the file
+/// location.
+fn self_findings(identity: &Value, root: &Value, out: &mut Vec<Finding>) {
+    const HELP: &str =
+        "remove `$self`, or keep references that resolve the same against the file location";
+    let refuse = |out: &mut Vec<Finding>, pointer: String, message: String| {
+        out.push(error("TG0140", pointer, &message, HELP));
+    };
+    let Some(identity) = identity.as_str().filter(|s| !s.is_empty()) else {
+        refuse(
+            out,
+            "/$self".into(),
+            "OpenAPI 3.2 `$self` must be a non-empty URI reference".into(),
+        );
+        return;
+    };
+    if identity.contains('#') {
+        refuse(
+            out,
+            "/$self".into(),
+            format!("OpenAPI 3.2 `$self` `{identity}` must not contain a fragment"),
+        );
+        return;
+    }
+    let absolute = has_scheme(identity) || identity.starts_with("//");
+    // A bare file name keeps the base directory; anything else moves it.
+    let same_directory =
+        !absolute && !identity.contains(['/', '?']) && identity != "." && identity != "..";
+    let mut refs = vec![];
+    external_refs(root, "", &mut refs);
+    for (pointer, target) in refs {
+        if has_scheme(target) || target.starts_with("//") {
+            let document = target.split('#').next().unwrap_or(target);
+            if absolute && document == identity {
+                refuse(
+                    out,
+                    pointer,
+                    format!(
+                        "`$ref` `{target}` names this document by its OpenAPI 3.2 `$self` URI, which is not supported"
+                    ),
+                );
+            }
+        } else if !same_directory {
+            refuse(
+                out,
+                pointer,
+                format!(
+                    "OpenAPI 3.2 `$self` `{identity}` changes the base URI of the relative `$ref` `{target}`, which tungsten resolves against the file location"
+                ),
+            );
+        }
+    }
+}
+
+/// Whether `s` starts with a URI scheme (`https:`).
+fn has_scheme(s: &str) -> bool {
+    let Some((scheme, _)) = s.split_once(':') else {
+        return false;
+    };
+    let mut chars = scheme.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
+}
+
+/// Every `$ref` of the document that names another document, with its
+/// pointer; example values are data, not references.
+fn external_refs<'v>(value: &'v Value, pointer: &str, out: &mut Vec<(String, &'v str)>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::String(target)) = map.get("$ref")
+                && !target.starts_with('#')
+            {
+                out.push((join_pointer(pointer, "$ref"), target));
+            }
+            for (key, v) in map {
+                if key != "example" && key != "examples" {
+                    external_refs(v, &join_pointer(pointer, key), out);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for (i, v) in items.iter().enumerate() {
+                external_refs(v, &join_pointer(pointer, &i.to_string()), out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Path item members that are operations; `additionalOperations` must not
+/// repeat them.
+const FIXED_METHODS: [&str; 9] = [
+    "get", "put", "post", "delete", "options", "head", "patch", "trace", "query",
+];
+
+/// Why `token` cannot be compiled as an `additionalOperations` method, or
+/// `None` when it is sent as written.
+pub fn custom_method_problem(token: &str) -> Option<String> {
+    let tchar = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c);
+    if token.is_empty() || !token.chars().all(tchar) {
+        return Some(format!(
+            "`{token}` is not an HTTP method token (RFC 9110 `tchar` characters only)"
+        ));
+    }
+    if let Some(fixed) = FIXED_METHODS.iter().find(|m| m.eq_ignore_ascii_case(token)) {
+        return Some(format!(
+            "`{token}` must be described by the path item's `{fixed}` field, not by `additionalOperations`"
+        ));
+    }
+    if token.eq_ignore_ascii_case("CONNECT") || token.eq_ignore_ascii_case("TRACK") {
+        return Some(format!(
+            "`{token}` is a forbidden method (it opens a tunnel or traces the connection, not a resource); generated clients cannot send it"
+        ));
+    }
+    None
+}
+
+/// Each `additionalOperations` entry is compiled with its key as the wire
+/// method; only keys that cannot be sent are refused.
+fn additional_operations(pointer: &str, extra: &Value, out: &mut Vec<Finding>) {
+    let Value::Object(extra) = extra else {
+        out.push(error(
+            "TG0142",
+            pointer.to_string(),
+            "OpenAPI 3.2 `additionalOperations` must be a map from HTTP method to operation",
+            "write a map such as `additionalOperations: { COPY: { ... } }`",
+        ));
+        return;
+    };
+    for token in extra.keys() {
+        if let Some(problem) = custom_method_problem(token) {
+            out.push(error(
+                "TG0142",
+                join_pointer(pointer, token),
+                &format!("OpenAPI 3.2 `additionalOperations` method {problem}; the operation would be left out"),
+                "use the method token the server expects, or the matching fixed path item field",
+            ));
+        }
+    }
+}
+
+fn server_findings_single(pointer: &str, server: Option<&Value>, out: &mut Vec<Finding>) {
+    if server.is_some_and(|s| s.get("name").is_some()) {
+        out.push(warning(
+            "TG0156",
+            join_pointer(&join_pointer(pointer, "server"), "name"),
+            "the OpenAPI 3.2 server `name` field is ignored",
+        ));
+    }
+}

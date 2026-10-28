@@ -29,7 +29,9 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-PACKAGES = ("npm", "python", "rust", "java", "csharp", "ruby")
+PACKAGES = ("npm", "python", "rust", "java", "kotlin", "csharp", "fsharp", "ruby")
+NUGET = {"csharp": "Tungsten.Runtime", "fsharp": "Tungsten.Runtime.FSharp"}
+KOTLIN_ARTIFACTS = ("tungsten-runtime-kotlin", "tungsten-runtime-kotlin-coroutines")
 LIMIT = 128 * 1024 * 1024
 HOSTS = {
     "registry.npmjs.org",
@@ -214,12 +216,12 @@ def ruby_version(version):
     return version.replace("-", ".pre.")
 
 
-def nuget_metadata(data, version):
+def nuget_metadata(data, version, package="csharp"):
     root = xml_fields(data)
     identity(
         root.findtext("metadata/id"),
         root.findtext("metadata/version"),
-        "Tungsten.Runtime",
+        NUGET[package],
         version,
     )
 
@@ -267,13 +269,21 @@ def local_archives(package, version, directory):
                 f"tungsten-runtime-{version}{suffix}"
                 for suffix in (".jar", "-sources.jar", "-javadoc.jar", ".pom")
             },
+            "kotlin": {
+                f"{artifact}-{version}{suffix}"
+                for artifact in KOTLIN_ARTIFACTS
+                for suffix in (".jar", "-sources.jar", "-javadoc.jar", ".pom")
+            },
             "csharp": {f"Tungsten.Runtime.{version}.nupkg"},
+            "fsharp": {f"Tungsten.Runtime.FSharp.{version}.nupkg"},
             "ruby": {f"tungsten-runtime-{version}.gem"},
         }[package]
         patterns = {
             "rust": ("*.crate",),
             "java": ("*.jar", "*.pom"),
+            "kotlin": ("*.jar", "*.pom"),
             "csharp": ("*.nupkg",),
+            "fsharp": ("*.nupkg",),
             "ruby": ("*.gem",),
         }[package]
         actual = {path.name for pattern in patterns for path in directory.glob(pattern)}
@@ -332,9 +342,22 @@ def local_archives(package, version, directory):
         )
         if metadata.findtext("groupId") != "io.github.pboachie.tungsten":
             raise ValueError("unexpected Maven group")
-    elif package == "csharp":
+    elif package == "kotlin":
+        for artifact in KOTLIN_ARTIFACTS:
+            metadata = xml_fields(files[f"{artifact}-{version}.pom"])
+            identity(
+                metadata.findtext("artifactId"),
+                metadata.findtext("version"),
+                artifact,
+                version,
+            )
+            if metadata.findtext("groupId") != "io.github.pboachie.tungsten":
+                raise ValueError("unexpected Maven group")
+    elif package in NUGET:
         nuget_metadata(
-            zip_entries(next(iter(files.values())))["Tungsten.Runtime.nuspec"], version
+            zip_entries(next(iter(files.values())))[NUGET[package] + ".nuspec"],
+            version,
+            package,
         )
     return files
 
@@ -447,6 +470,11 @@ def verify_files(package, version, files, fetch, save_download=None):
         base = f"https://repo.maven.apache.org/maven2/io/github/pboachie/tungsten/tungsten-runtime/{version}/"
         for name, data in files.items():
             results.append(exact_file(name, data, base + name, fetch))
+    elif package == "kotlin":
+        for name, data in files.items():
+            artifact = next(a for a in KOTLIN_ARTIFACTS if name.startswith(f"{a}-{version}"))
+            base = f"https://repo.maven.apache.org/maven2/io/github/pboachie/tungsten/{artifact}/{version}/"
+            results.append(exact_file(name, data, base + name, fetch))
     elif package == "ruby":
         normalized = ruby_version(version)
         metadata = json_object(
@@ -467,10 +495,13 @@ def verify_files(package, version, files, fetch, save_download=None):
         url = f"https://rubygems.org/downloads/tungsten-runtime-{normalized}.gem"
         results.append(exact_file(name, data, url, fetch))
     else:
-        base = f"https://api.nuget.org/v3-flatcontainer/tungsten.runtime/{version.lower()}/"
-        nuget_metadata(fetch_data(fetch, base + "tungsten.runtime.nuspec"), version)
+        package_id = NUGET[package].lower()
+        base = f"https://api.nuget.org/v3-flatcontainer/{package_id}/{version.lower()}/"
+        nuget_metadata(
+            fetch_data(fetch, base + package_id + ".nuspec"), version, package
+        )
         name, original = next(iter(files.items()))
-        url = base + f"tungsten.runtime.{version.lower()}.nupkg"
+        url = base + f"{package_id}.{version.lower()}.nupkg"
         published = fetch_data(fetch, url)
         tested, public = zip_entries(original), zip_entries(published)
         if set(public) - set(tested) - {".signature.p7s"} or any(
@@ -479,7 +510,7 @@ def verify_files(package, version, files, fetch, save_download=None):
             raise ValueError(
                 "NuGet changed a tested ZIP entry or added an unexpected entry"
             )
-        nuget_metadata(public["Tungsten.Runtime.nuspec"], version)
+        nuget_metadata(public[NUGET[package] + ".nuspec"], version, package)
         result = {
             "name": name,
             "sha256": sha256(original),
@@ -507,7 +538,7 @@ def verify_files(package, version, files, fetch, save_download=None):
 def check_save_directory(package, directory, save_download):
     if save_download is not None:
         target, original = Path(save_download).resolve(), Path(directory).resolve()
-        if package != "csharp" or target == original or original in target.parents:
+        if package not in NUGET or target == original or original in target.parents:
             raise ValueError(
                 "saved public downloads require a separate NuGet-only directory"
             )

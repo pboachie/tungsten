@@ -95,6 +95,7 @@ final class ClientCore {
   /// http(s) URL without credentials, or an unknown redirect policy.
   ClientCore(this.descriptors, [ClientOptions options = const ClientOptions()])
       : _api = descriptors.api,
+        _allowInsecureHttp = options.allowInsecureHttp,
         _auth = {...options.auth},
         _headers = {...options.headers},
         _retries = options.retries,
@@ -102,15 +103,15 @@ final class ClientCore {
         _middleware = [...options.middleware],
         _validateResponses = options.validateResponses,
         _onDiagnostic = options.onDiagnostic,
-        _confirmationKey =
-            options.confirmationKey == null || options.confirmationKey!.isEmpty
-                ? _Util.randomBytes(32)
-                : [...options.confirmationKey!],
+        _confirmationKey = _configuredConfirmationKey(options.confirmationKey),
         _nowFn = options.now,
         _randomFn = options.random,
         _tokenStore = options.tokenStore ?? MemoryTokenStore(),
+        _maxOAuthTokenResponseBytes = options.maxOAuthTokenResponseBytes ??
+            defaultMaxOAuthTokenResponseBytes,
         _timeoutMs = _positiveMs(options.timeout) ?? defaultTimeoutMs,
-        maxResponseBytes = options.maxResponseBytes,
+        _deadlineMs = _positiveMs(options.deadline),
+        maxResponseBytes = options.maxResponseBytes ?? 4 * 1024 * 1024,
         maxEventBytes = _positive(options.maxEventBytes) ?? 1024 * 1024,
         maxCollectBytes = _positive(options.maxCollectBytes) ?? 4 * 1024 * 1024,
         maxCollectMs = _positiveMs(options.maxCollect) ?? 60000,
@@ -143,6 +144,59 @@ final class ClientCore {
   /// build only against a runtime that honours the policy.
   static void requireRedirectPolicyV1() {}
 
+  /// Generated clients call this when an operation carries an
+  /// imported-operation policy, so they build only against a runtime that
+  /// enforces it.
+  static void requireImportPolicyV1() {}
+
+  static List<int> _configuredConfirmationKey(List<int>? key) {
+    if (key == null) return _Util.randomBytes(32);
+    if (key.length < 32 || key.any((byte) => byte < 0 || byte > 255)) {
+      throw const ClientConfigException(
+        'confirmationKey must contain at least 32 bytes; omit it to generate a random key',
+      );
+    }
+    return [...key];
+  }
+
+  /// Credential-bearing HTTP requests require an explicit opt-in off loopback.
+  static const _insecureHttpAuth =
+      'Refusing to send credentials over non-loopback HTTP. Use HTTPS, or set ClientOptions.allowInsecureHttp = true for intentional insecure transport. Nothing was sent.';
+  final bool _allowInsecureHttp;
+
+  bool _credentialHeader(String name, [bool preservedIdempotency = false]) {
+    if ((!preservedIdempotency && _Util.looksSensitive(name)) ||
+        ['authorization', 'proxy-authorization', 'cookie']
+            .contains(name.toLowerCase())) return true;
+    final schemes = _api['auth'];
+    return schemes is List &&
+        schemes.whereType<Map<String, Object?>>().any((s) =>
+            (s['kind'] == 'api_key' &&
+                s['in'] == 'header' &&
+                _str(s['wire']).toLowerCase() == name.toLowerCase()) ||
+            (s['kind'] == 'composite' &&
+                s['parts'] is List &&
+                (s['parts'] as List).whereType<Map<String, Object?>>().any(
+                    (p) =>
+                        p['kind'] == 'header' &&
+                        p['from_config'] == null &&
+                        _str(p['name']).toLowerCase() == name.toLowerCase())));
+  }
+
+  bool _insecureHttp(String target) {
+    if (_allowInsecureHttp) return false;
+    final url = Uri.tryParse(target);
+    if (url == null || url.scheme.toLowerCase() != 'http') return false;
+    final host = url.host.toLowerCase();
+    if (host == 'localhost' || host == 'localhost.') return false;
+    final ip = InternetAddress.tryParse(host);
+    return ip == null ||
+        (ip.type == InternetAddressType.IPv4
+            ? ip.rawAddress.first != 127
+            : !ip.rawAddress.take(15).every((b) => b == 0) ||
+                ip.rawAddress.last != 1);
+  }
+
   /// Same-origin redirects one read follows.
   static const int maxRedirects = 5;
 
@@ -168,7 +222,7 @@ final class ClientCore {
   /// The base URL requests go to (empty when none is configured).
   late final String baseUrl;
 
-  /// Maximum buffered response bytes, or null when unlimited.
+  /// Maximum ordinary response bytes; omitted options inherit 4 MiB.
   final int? maxResponseBytes;
 
   /// The largest event of a stream, in UTF-8 bytes.
@@ -202,14 +256,20 @@ final class ClientCore {
   final int Function()? _nowFn;
   final double Function()? _randomFn;
   final TokenStore _tokenStore;
+  final int _maxOAuthTokenResponseBytes;
   final int _timeoutMs;
+  final int? _deadlineMs;
   late final bool _redirectsDisabled;
   final Map<String, OperationDescriptor> _registry = {};
   final _Lock _keyLock = _Lock();
   final Map<String, (String?, int)> _usedTokens = {};
   final Map<String, (String, String, int)> _ccTokens = {};
   final Map<String, Future<(String?, String?)>> _ccFlights = {};
-  final Map<String, Future<_TokenOutcome>> _refreshes = {};
+  final Map<String, _OAuthPending> _oauthAttempts = {};
+  final Map<String, _OAuthVersion> _oauthVersions = {};
+  final Set<_OAuthOwner> _oauthOwners = {};
+  final Map<(String, int, int), _OAuthRefresh> _oauthRefreshes = {};
+  int _oauthWaiters = 0;
   static final math.Random _jitter = math.Random();
 
   static int? _positive(int? value) =>
@@ -259,7 +319,7 @@ final class ClientCore {
     final d = op as OperationDescriptor;
     final result = await _guard(
       d.id,
-      () => _callWith(d, args, options, null, null),
+      () => _callWith(d, args, _withCallDeadline(options), null, null),
     );
     return _typed(result, d.id, decode);
   }
@@ -275,7 +335,8 @@ final class ClientCore {
     final op = _resolve(operation);
     if (op is Err<Object?>) return op.cast<PreviewResult>();
     final d = op as OperationDescriptor;
-    final result = await _guard(d.id, () => _previewWith(d, args, options));
+    final result = await _guard(
+        d.id, () => _previewWith(d, args, _withCallDeadline(options)));
     return switch (result) {
       Err<Object?>() => result.cast<PreviewResult>(),
       Ok<Object?>() => result.withValue(result.value! as PreviewResult),
@@ -302,7 +363,7 @@ final class ClientCore {
         until,
         interval.inMilliseconds,
         budget.inMilliseconds,
-        options,
+        _withCallDeadline(options),
         null,
       ),
     );
@@ -310,6 +371,93 @@ final class ClientCore {
       Err<Object?>() => result.cast<PollResult>(),
       Ok<Object?>() => result.withValue(result.value! as PollResult),
     };
+  }
+
+  // ----------------------------------------------------------- deadline
+
+  /// The options with the absolute deadline of one logical call, fixed when
+  /// a public entry point starts it. Nested work (pages, polls,
+  /// verification, macro steps) inherits it and takes the earlier one, so
+  /// it is never restarted or extended.
+  CallOptions _withCallDeadline(CallOptions opts) {
+    final ms = _positiveMs(opts.deadline) ?? _deadlineMs;
+    if (ms == null) return opts;
+    final at = _Transport.monotonicMs() + ms;
+    final inherited = opts._callDeadline;
+    return opts._with(
+      callDeadline: inherited == null ? at : math.min(inherited, at),
+    );
+  }
+
+  /// Milliseconds left before the call's deadline, null without one.
+  int? _deadlineLeft(CallOptions opts) {
+    final at = opts._callDeadline;
+    return at == null ? null : at - _Transport.monotonicMs();
+  }
+
+  bool _deadlinePassed(CallOptions opts) {
+    final left = _deadlineLeft(opts);
+    return left != null && left <= 0;
+  }
+
+  _Stop _deadlineExpired(OperationDescriptor op, String during) => _Stop(
+        _diag(op.id, 'TRANSPORT_FAILED')
+            .code('DEADLINE_EXCEEDED')
+            .retrying('never')
+            .remedy(
+              'The operation deadline (deadline) expired $during, so the request was not sent. Call again with a larger deadline.',
+            )
+            .err<Object?>(),
+      );
+
+  /// Waits for [work] only until the call's deadline: (false, null) when
+  /// the deadline came first. The work is not cancelled: a shared token
+  /// refresh or store write keeps running for its other waiters, bounded by
+  /// its own timeout.
+  Future<(bool, R?)> _untilDeadline<R>(Future<R> work, CallOptions opts) async {
+    final left = _deadlineLeft(opts);
+    if (left == null) return (true, await work);
+    if (left <= 0) {
+      work.ignore();
+      return (false, null);
+    }
+    final first = Completer<(bool, R?)>();
+    final timer = Timer(Duration(milliseconds: left), () {
+      if (!first.isCompleted) first.complete((false, null));
+    });
+    unawaited(
+      work.then(
+        (v) {
+          if (!first.isCompleted) first.complete((true, v));
+        },
+        onError: (Object e, StackTrace s) {
+          if (!first.isCompleted) first.completeError(e, s);
+        },
+      ),
+    );
+    try {
+      return await first.future;
+    } finally {
+      timer.cancel();
+    }
+  }
+
+  /// The call's deadline ran out before a response (or a read's body)
+  /// arrived.
+  Result<Object?> _deadlineTimeout(_CallContext ctx, int? status) {
+    const cause = 'The operation deadline expired before a response arrived.';
+    if (ctx.op.isMutation) {
+      return Err<Object?>(_Classify.outcomeUnknown(ctx, cause));
+    }
+    return _diag(ctx.op.id, 'UPSTREAM_UNAVAILABLE')
+        .code('DEADLINE_EXCEEDED')
+        .status(status)
+        .retrying('never')
+        .remedy(
+          '$cause This read has no side effects; call again with a larger deadline.',
+        )
+        .attempts(ctx.attempts)
+        .err<Object?>();
   }
 
   // ------------------------------------------------------------ helpers
@@ -521,8 +669,11 @@ final class ClientCore {
     p.oauth = null;
     final current = p.headers.get('Authorization');
     if (current == null || !current.startsWith('Bearer ')) return rejected;
-    final token = await _refreshAfterRejection(scheme, current.substring(7));
-    if (token == null) return rejected;
+    final (refreshed, token) = await _untilDeadline(
+      _refreshAfterRejection(scheme, current.substring(7)),
+      opts,
+    );
+    if (!refreshed || token == null) return rejected;
     p.headers.set('Authorization', 'Bearer $token', true);
     p.secrets.add(token);
     return _sendRequest(p, opts);
@@ -584,8 +735,9 @@ final class ClientCore {
     final request = op.request;
     if (request != null) {
       final List<Issue> issues;
+      final notes = <UncheckedPattern>[];
       try {
-        issues = request.validate(args);
+        issues = request.validate(args, onUnchecked: notes.add);
       } catch (_) {
         throw _Stop(
           _diag(op.id, 'UNEXPECTED_RESPONSE')
@@ -597,6 +749,7 @@ final class ClientCore {
               .err<Object?>(),
         );
       }
+      _reportUnchecked(op.id, 'args', notes, 'VALIDATION_FAILED');
       if (issues.isEmpty) return;
       Issue? issue;
       if (placeholders) {
@@ -840,6 +993,7 @@ final class ClientCore {
             .err<Object?>(),
       );
     }
+    _checkImportScope(op, urlOverride ?? baseUrl);
     register([op]);
     final args = _normalizeArgs(op, rawArgs);
     if (_Util.nestsDeeper(args, _Util.maxArgDepth)) {
@@ -865,7 +1019,16 @@ final class ClientCore {
       if (err != null) throw _Stop(err);
     }
     final method = op.method;
-    final auth = await _resolveAuth(op, method);
+    if (_deadlinePassed(opts)) {
+      throw _deadlineExpired(op, 'before the request could be sent');
+    }
+    final (authenticated, resolvedAuth) = await _untilDeadline(
+      _resolveAuth(op, method,
+          _insecureHttp(urlOverride ?? baseUrl) ? _insecureHttpAuth : null),
+      opts,
+    );
+    if (!authenticated) throw _deadlineExpired(op, 'while authenticating');
+    final auth = resolvedAuth!;
     if (auth.failed != null) {
       throw _Stop(
         _diag(op.id, 'AUTH_FAILED').remedy(auth.failed).err<Object?>(),
@@ -880,10 +1043,19 @@ final class ClientCore {
     final (fullUrl, displayUrl) = _buildUrl(op, args, auth.plan, urlOverride);
     final headers = _HeaderBag();
     _buildHeaders(op, args, opts, auth.plan, headers);
+    if (_insecureHttp(fullUrl) &&
+        (auth.plan.headers.isNotEmpty ||
+            auth.plan.cookies.isNotEmpty ||
+            auth.plan.query.isNotEmpty ||
+            headers.entries
+                .any((h) => h.secret || _credentialHeader(h.name)))) {
+      throw _Stop(
+          _diag(op.id, 'AUTH_FAILED').remedy(_insecureHttpAuth).err<Object?>());
+    }
     final paramNames = [for (final p in op.argumentParams) p.name];
     final bodyPaths = _Helpers.sensitiveBodyPaths(op);
     Object? value = unset;
-    if (!_Auth.safeMethod(method) || method == 'OPTIONS') {
+    if (!_Auth.safeMethod(method) || method == 'OPTIONS' || method == 'QUERY') {
       value = _Serialize.bodyValue(op, args, paramNames);
     }
     Object? redact(Object? display) {
@@ -924,6 +1096,17 @@ final class ClientCore {
     final preview = op._preview;
     if (purpose == _Purpose.serverPreview && preview['mode'] == 'header') {
       headers.set(_str(preview['header']), _str(preview['value']), false);
+    }
+    if (_insecureHttp(fullUrl) &&
+        headers.entries.any((h) {
+          final preserved = key != null &&
+              h.name.toLowerCase() == header.toLowerCase() &&
+              h.value == key;
+          return (h.secret && !preserved) ||
+              _credentialHeader(h.name, preserved);
+        })) {
+      throw _Stop(
+          _diag(op.id, 'AUTH_FAILED').remedy(_insecureHttpAuth).err<Object?>());
     }
     for (final e in headers.entries) {
       if (_Serialize.validHeaderName(e.name) &&
@@ -1191,7 +1374,39 @@ final class ClientCore {
       display = root + displayedPath + join(shown);
     }
     if (!_validBaseUrl(full)) throw _badBase(op);
+    _checkImportScope(op, full);
     return (full, display);
+  }
+
+  /// The origin (scheme, host and port) of an absolute http(s) URL without
+  /// credentials, or null.
+  static String? _originOf(Object? url) {
+    if (url is! String || !_validBaseUrl(url)) return null;
+    final u = Uri.parse(url);
+    return '${u.scheme.toLowerCase()}://${u.host.toLowerCase()}:${u.port}';
+  }
+
+  /// Refuses a reviewed imported operation whose target lies outside the
+  /// origins its review covers; throws [_Stop]. A malformed or missing scope
+  /// fails closed.
+  void _checkImportScope(OperationDescriptor op, String target) {
+    final policy = op.agent['import_policy'];
+    if (policy is! Map || policy['reviewed'] != true) return;
+    final actual = _originOf(target);
+    final origins = policy['allowed_origins'];
+    final allowed = actual != null &&
+        origins is List &&
+        origins.any((o) => _originOf(o) == actual);
+    if (allowed) return;
+    throw _Stop(
+      _diag(op.id, 'VALIDATION_FAILED')
+          .param('base_url')
+          .retrying('never')
+          .remedy(
+            "The target origin is outside this operation's saved review policy. Select a reviewed server or review a separate policy for this environment. Nothing was sent.",
+          )
+          .err<Object?>(),
+    );
   }
 
   static List<(String, String)> _queryPairs(String? raw) {
@@ -1345,20 +1560,19 @@ final class ClientCore {
               'for the same intent. Fix or replace ClientOptions.idempotencyStore.',
             )
             .err<Object?>();
-        final (key, err) = await _keyLock.run(() async {
+        final (reserved, keyed) = await _untilDeadline(_keyLock.run(() async {
           try {
-            final existing = await _store.get(op.id, logical);
-            if (existing != null && existing.isNotEmpty) {
-              return (existing, null);
-            }
-            final key = _Util.uuidV4();
-            await _store.put(op.id, logical, key);
-            if (await _store.get(op.id, logical) == key) return (key, null);
-            return (null, failed('the key could not be stored'));
+            final key = await _store.reserve(op.id, logical, _Util.uuidV4());
+            if (key.isNotEmpty) return (key, null);
+            return (null, failed('it returned no key'));
           } catch (_) {
             return (null, failed('it threw an error'));
           }
-        });
+        }), opts);
+        if (!reserved) {
+          throw _deadlineExpired(op, 'while reserving an idempotency key');
+        }
+        final (key, err) = keyed!;
         if (err != null) throw _Stop(err);
         return key;
       default:
@@ -1447,6 +1661,17 @@ final class ClientCore {
     var attempts = 0;
     while (true) {
       attempts++;
+      if (_deadlinePassed(opts)) {
+        return (
+          _deadlineExpired(op, 'before the request could be sent').err,
+          null,
+        );
+      }
+      // Each attempt's timeout is cut to the time left before the call's
+      // deadline.
+      final left = _deadlineLeft(opts);
+      final byDeadline = left != null && left < timeout;
+      final attemptMs = byDeadline ? math.max(left, 1) : timeout;
       var rctx = _requestContext(p, attempts);
       _onRequest(rctx);
       var target = p.url;
@@ -1458,9 +1683,11 @@ final class ClientCore {
             method: method,
             headers: headers,
             body: body,
-            timeoutMs: timeout,
+            timeoutMs: attemptMs,
             stream: stream,
-            idleMs: stream ? idleTimeoutMs : null,
+            // An open stream keeps the idle bound of an uncut attempt; the
+            // deadline only bounds connecting.
+            idleMs: stream ? idleTimeoutMs ?? timeout : null,
             maxResponseBytes: opts.maxResponseBytes ?? maxResponseBytes,
           );
       var outcome = await sendOnce();
@@ -1505,13 +1732,25 @@ final class ClientCore {
         attempts: attempts,
         check: check,
       );
-      final (result, streamed) = _classifyResponse(
-        ctx,
-        p,
-        outcome,
-        rctx,
-        timeout,
-      );
+      final (result, streamed) = byDeadline &&
+              (outcome.kind == _Kind.timeout ||
+                  (outcome.kind == _Kind.response &&
+                      outcome.bodyFailure == 'timeout' &&
+                      !mutation))
+          ? (
+              _deadlineTimeout(
+                ctx,
+                outcome.kind == _Kind.response ? outcome.status : null,
+              ),
+              null,
+            )
+          : _classifyResponse(
+              ctx,
+              p,
+              outcome,
+              rctx,
+              timeout,
+            );
       if (streamed != null) return (null, streamed);
       if (result is Ok<Object?>) {
         p.pageState
@@ -1548,6 +1787,9 @@ final class ClientCore {
           _ => r * ceiling,
         };
       }
+      // A retry that could not start before the deadline is not waited for.
+      final rest = _deadlineLeft(opts);
+      if (rest != null && rest <= delay) return (done, null);
       _onRetry(rctx, d);
       await Future<void>.delayed(
         Duration(microseconds: (math.max(delay, 0) * 1000).round()),
@@ -1754,7 +1996,12 @@ final class ClientCore {
     } else if (mode != ValidateResponses.off &&
         response != null &&
         decoded.present) {
-      final issues = _judge(response, decoded.value);
+      final issues = _judge(
+        op.id,
+        'response',
+        response,
+        decoded.value,
+      );
       if (issues.isNotEmpty) {
         final issue = issues.first;
         final pathText = Schema.issuePath(issue.path);
@@ -1811,14 +2058,57 @@ final class ClientCore {
   }
 
   /// A validator that only judges (responses, page items, events): a
-  /// failure of the validator itself is an issue at the root.
-  static List<Issue> _judge(Schema validator, Object? value) {
+  /// failure of the validator itself is an issue at the root. Patterns it
+  /// could not check are reported under [root] (once per path and pattern in
+  /// [seen]).
+  List<Issue> _judge(
+    String operation,
+    String root,
+    Schema validator,
+    Object? value, [
+    Set<String>? seen,
+  ]) {
+    final notes = <UncheckedPattern>[];
     try {
-      return validator.validate(value);
+      final issues = validator.validate(value, onUnchecked: notes.add);
+      _reportUnchecked(operation, root, notes, 'UNEXPECTED_RESPONSE', seen);
+      return issues;
     } catch (_) {
       return const [
         Issue([], 'the response schema failed (the validator threw an error)'),
       ];
+    }
+  }
+
+  /// A schema pattern the runtime cannot compile accepts the value but is
+  /// reported through `onDiagnostic` as `PATTERN_UNCHECKED`, once per path and
+  /// pattern (at most 16 a call). The value is never included.
+  void _reportUnchecked(
+    String operation,
+    String root,
+    List<UncheckedPattern> notes,
+    String category, [
+    Set<String>? seen,
+  ]) {
+    final done = seen ?? <String>{};
+    var sent = 0;
+    for (final note in notes) {
+      if (sent >= 16) break;
+      final param = '$root${Schema.issuePath(note.path)}';
+      if (!done.add('$param\n${note.pattern}')) continue;
+      sent++;
+      _emit(
+        _diag(operation, category)
+            .code('PATTERN_UNCHECKED')
+            .retrying('never')
+            .param(param)
+            .expected('a value matching the pattern /${note.pattern}/')
+            .remedy(
+              'The pattern /${note.pattern}/ at $param was not checked because ${note.reason}; '
+              'the value was accepted without it. The server still validates it.',
+            )
+            .build(),
+      );
     }
   }
 
@@ -2063,6 +2353,12 @@ final class ClientCore {
           raw: ok.raw,
           meta: ok.meta,
         );
+      }
+      // The next poll could not be sent before the call's deadline, so it
+      // is not waited for.
+      final left = _deadlineLeft(opts);
+      if (left != null && left <= intervalMs) {
+        throw _deadlineExpired(op, 'before the next poll');
       }
       await Future<void>.delayed(
         Duration(milliseconds: math.max(intervalMs, 0)),

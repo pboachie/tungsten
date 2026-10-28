@@ -240,7 +240,8 @@ pub(crate) fn blocking_file(
                 | MemberKind::Preview(o)
                 | MemberKind::Pages(o)
                 | MemberKind::Stream(o) => o,
-                MemberKind::Child(_) => continue,
+                // A download or upload reads its body asynchronously.
+                MemberKind::Download(_) | MemberKind::Upload(_) | MemberKind::Child(_) => continue,
             };
             let info = &plan.ops[o];
             let names = op_names(r, o);
@@ -254,7 +255,7 @@ pub(crate) fn blocking_file(
             let id = &info.op.id.0;
             let facts = format!(
                 "`{} {}` (`{}`). Safety: `{}`.",
-                super::ops::method_str(info.op.method),
+                info.op.wire_method(),
                 info.op.path.raw,
                 id,
                 super::ops::safety_str(info.op.agent.safety)
@@ -364,7 +365,7 @@ pub(crate) fn blocking_file(
                     code.line("}");
                     extra.push(("tungsten_runtime::blocking".into(), "Events".into()));
                 }
-                MemberKind::Child(_) => {}
+                MemberKind::Download(_) | MemberKind::Upload(_) | MemberKind::Child(_) => {}
             }
         }
         code.dedent();

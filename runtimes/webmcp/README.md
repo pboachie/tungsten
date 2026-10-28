@@ -58,11 +58,36 @@ For route-based loading, use `createWebMcpRegistrationController` with dynamical
 
 For lower-level integration, `registerTungstenWebMcp` accepts a `ClientCore`, a generated manifest and registration options. An abort signal cancels active calls and removes owned tools. Streaming and binary results require explicit bounded collection or rendering policies.
 
+## Python-backed tools (experimental)
+
+`registerRemoteWebMcp({ endpoint: "/webmcp" })` registers the tools that a dispatch endpoint
+of the page's own application exposes to the signed-in user. Each call is sent there and
+runs on the server. An example is the Python dispatch app generated with `webmcp: true` on
+the `mcp-python` target (see the `tungsten-mcp` README). The page needs no SDK and holds
+no API credentials.
+
+- The endpoint must be on the page's own origin. Requests carry `X-Tungsten-WebMCP: 1`
+  and same-origin credentials only.
+- The server decides which tools a user sees and authorizes every call. Hiding a tool here
+  is not access control.
+- Results are the server's `{ok, value}` or `{ok: false, error}` envelopes, bounded by
+  `maxResultBytes`. A failed or cancelled request for a mutation says the call may have
+  taken effect.
+- Registration, ownership, abort and `dispose()` behave as for `registerTungstenWebMcp`.
+
 ## Browser authorization
 
 Use your application's browser session and API authorization. The API must enforce access controls; tool annotations do not grant access. Configure CORS and CSRF protections for your deployment, and keep server credentials out of frontend bundles. Keep the separate `@elysra/tungsten-runtime/node` export out of browser code.
 
 ## Limits
+
+In unreleased 0.2.0, `toolDeadlineMs` (a registration option of `register` and
+`registerTungstenWebMcp`) gives each tool call a total deadline, passed to the
+client runtime as `deadlineMs`. It bounds authentication, every attempt, retry
+waits and a whole macro; a streamed call's deadline bounds connecting, while
+`streamCollection.maxDurationMs` bounds collecting. Expiry returns a failure
+with `code` `DEADLINE_EXCEEDED` and sends nothing more; a mutation already sent
+reports `OUTCOME_UNKNOWN`. Omitted or 0 keeps the client's `deadlineMs`, if any.
 
 Browser support depends on the available WebMCP backend. No file-backed OAuth token store is provided; persist credentials only through application-owned browser authorization flows.
 
@@ -75,3 +100,11 @@ Browser support depends on the available WebMCP backend. No file-backed OAuth to
 ## License
 
 Apache-2.0. The Tungsten compiler is licensed separately under AGPL-3.0-only.
+
+## API credential transport
+
+The browser registration delegates API calls to its configured `ClientCore`, which
+requires HTTPS for credentials and OAuth token endpoints. For intentional
+non-loopback HTTP, set `allowInsecureHttp: true` in that core's `ClientOptions`.
+Loopback remains usable without an override; this option controls outgoing API
+requests. Prefer HTTPS when migrating existing authenticated HTTP targets.

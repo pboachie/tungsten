@@ -44,6 +44,7 @@ mod plan;
 mod resources;
 mod rs;
 mod types;
+mod webhooks;
 
 use tungsten_core::{Diagnostic, Diagnostics};
 use tungsten_emit::{CommentStyle, FileSet, TargetConfig, header};
@@ -206,6 +207,12 @@ fn generate(ir: &Ir, opts: &Options) -> Vec<(String, String)> {
         format!("{p}/src/blocking.rs"),
         blocking::blocking_file(&plan, &shapes, &macro_plans, &hdr_slash),
     ));
+    if tungsten_emit::webhooks::has_webhooks(ir) {
+        files.push((
+            format!("{p}/src/webhooks.rs"),
+            webhooks::webhooks_file(&plan, &hdr_slash),
+        ));
+    }
     if has_macros {
         files.push((
             format!("{p}/src/macros.rs"),

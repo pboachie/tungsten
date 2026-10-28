@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>io.github.pboachie.tungsten</groupId>
+  <artifactId>tungsten-runtime-kotlin-coroutines</artifactId>
+  <version>0.1.5</version>
+  <packaging>jar</packaging>
+
+  <name>tungsten runtime for Kotlin coroutines</name>
+  <description>The opt-in suspend and Flow layer of the Kotlin SDKs tungsten generates: cancellable suspend calls and cold Flows of pages and server-sent events over the blocking Kotlin runtime.</description>
+  <url>https://github.com/pboachie/tungsten</url>
+
+  <licenses>
+    <license>
+      <name>Apache-2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+    </license>
+  </licenses>
+
+  <scm>
+    <url>https://github.com/pboachie/tungsten</url>
+    <connection>scm:git:https://github.com/pboachie/tungsten.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/pboachie/tungsten.git</developerConnection>
+    <tag>v0.1.3</tag>
+  </scm>
+
+  <developers>
+    <developer>
+      <id>pboachie</id>
+      <name>Prince Boachie</name>
+      <url>https://github.com/pboachie</url>
+    </developer>
+  </developers>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <kotlin.version>2.4.21</kotlin.version>
+    <kotlin.compiler.jvmTarget>17</kotlin.compiler.jvmTarget>
+  </properties>
+
+  <dependencies>
+    <!-- The exact same-version Kotlin layer and Java runtime: all transport and semantics live there. -->
+    <dependency>
+      <groupId>io.github.pboachie.tungsten</groupId>
+      <artifactId>tungsten-runtime-kotlin</artifactId>
+      <version>0.1.5</version>
+    </dependency>
+    <dependency>
+      <groupId>io.github.pboachie.tungsten</groupId>
+      <artifactId>tungsten-runtime</artifactId>
+      <version>0.1.5</version>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlin</groupId>
+      <artifactId>kotlin-stdlib</artifactId>
+      <version>2.4.21</version>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlinx</groupId>
+      <artifactId>kotlinx-coroutines-core</artifactId>
+      <version>1.10.2</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <sourceDirectory>${project.basedir}/src/main/kotlin</sourceDirectory>
+    <resources>
+      <resource>
+        <directory>${project.basedir}</directory>
+        <includes><include>README.md</include><include>LICENSE</include></includes>
+        <targetPath>META-INF</targetPath>
+      </resource>
+    </resources>
+    <plugins>
+      <plugin>
+        <groupId>org.jetbrains.kotlin</groupId>
+        <artifactId>kotlin-maven-plugin</artifactId>
+        <version>2.4.21</version>
+        <configuration>
+          <jvmTarget>17</jvmTarget>
+          <args>
+            <arg>-Werror</arg>
+            <arg>-Xexplicit-api=strict</arg>
+          </args>
+        </configuration>
+        <executions>
+          <execution>
+            <id>compile</id>
+            <phase>compile</phase>
+            <goals><goal>compile</goal></goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.2</version>
+        <configuration>
+          <archive>
+            <manifestEntries>
+              <Automatic-Module-Name>io.github.pboachie.tungsten.runtime.kotlin.coroutines</Automatic-Module-Name>
+            </manifestEntries>
+          </archive>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <profile>
+      <id>release-artifacts</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>3.3.1</version>
+            <executions><execution><id>sources</id><goals><goal>jar-no-fork</goal></goals></execution></executions>
+          </plugin>
+          <!-- Kotlin has no javadoc; Central requires the archive, so ship the checked-in pointer page. -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-jar-plugin</artifactId>
+            <version>3.4.2</version>
+            <executions>
+              <execution>
+                <id>javadoc</id>
+                <phase>package</phase>
+                <goals><goal>jar</goal></goals>
+                <configuration>
+                  <classifier>javadoc</classifier>
+                  <classesDirectory>${project.basedir}/javadoc</classesDirectory>
+                  <archive><addMavenDescriptor>false</addMavenDescriptor></archive>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

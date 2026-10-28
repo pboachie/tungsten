@@ -36,12 +36,21 @@ for (const pkg of ["ts", "mcp", "webmcp"]) {
   expect(`${pkg} lock package`, lock.packages[""].version);
 }
 expect("Python manifest", tomlVersion("runtimes/python/pyproject.toml", "project"));
+expect("Python MCP manifest", tomlVersion("runtimes/mcp-python/pyproject.toml", "project"));
 expect("Rust runtime manifest", tomlVersion("runtimes/rust/Cargo.toml", "workspace.package"));
 expect("Java manifest", capture("runtimes/java/pom.xml", /<version>([^<]+)<\/version>/));
 expect("C# manifest", capture("runtimes/csharp/Tungsten.Runtime.csproj", /<Version>([^<]+)<\/Version>/));
 expect("F# manifest", capture("runtimes/fsharp/Tungsten.Runtime.FSharp.fsproj", /<Version>([^<]+)<\/Version>/));
 expect("Kotlin manifest", capture("runtimes/kotlin/build.gradle.kts", /^version\s*=\s*"([^"]+)"/m));
 expect("Kotlin Java runtime dependency", capture("runtimes/kotlin/build.gradle.kts", /api\("io\.github\.pboachie\.tungsten:tungsten-runtime:([^"]+)"\)/));
+expect("Kotlin Maven manifest", capture("runtimes/kotlin/pom.xml", /<version>([^<]+)<\/version>/));
+expect("Kotlin Maven Java runtime dependency", capture("runtimes/kotlin/pom.xml", /<artifactId>tungsten-runtime<\/artifactId>\s*<version>([^<]+)<\/version>/));
+expect("Kotlin coroutines manifest", capture("runtimes/kotlin/coroutines/build.gradle.kts", /^version\s*=\s*"([^"]+)"/m));
+expect("Kotlin coroutines Java runtime dependency", capture("runtimes/kotlin/coroutines/build.gradle.kts", /api\("io\.github\.pboachie\.tungsten:tungsten-runtime:([^"]+)"\)/));
+expect("Kotlin coroutines Kotlin layer dependency", capture("runtimes/kotlin/coroutines/build.gradle.kts", /api\("io\.github\.pboachie\.tungsten:tungsten-runtime-kotlin:([^"]+)"\)/));
+expect("Kotlin coroutines Maven manifest", capture("runtimes/kotlin/coroutines/pom.xml", /<version>([^<]+)<\/version>/));
+expect("Kotlin coroutines Maven Kotlin layer dependency", capture("runtimes/kotlin/coroutines/pom.xml", /<artifactId>tungsten-runtime-kotlin<\/artifactId>\s*<version>([^<]+)<\/version>/));
+expect("Kotlin coroutines Maven Java runtime dependency", capture("runtimes/kotlin/coroutines/pom.xml", /<artifactId>tungsten-runtime<\/artifactId>\s*<version>([^<]+)<\/version>/));
 expect("Dart manifest", capture("runtimes/dart/pubspec.yaml", /^version:\s*(\S+)/m));
 expect("Go emitter default", capture("emitters/go/main.go", /const defaultRuntimeVersion\s*=\s*"v([^"]+)"/));
 

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Confirmation tokens (planning/06 "Preview and confirmation"):
+ * Confirmation tokens:
  * `tgc1.<expiry ms>.<base64url(HMAC-SHA-256(key, op id, args digest, expiry))>`.
  * A token is valid only for the operation and the exact arguments it was
  * issued for, until its expiry.
  */
+import { UploadSource } from "./upload.js";
 import { base64url, canonicalJson, hmacSha256, sha256Hex, timingSafeEqual } from "./util.js";
 
 /** Lifetime of a confirmation token. */
@@ -49,6 +50,8 @@ export function argumentSnapshot(value: unknown, stack = new Set<object>()): unk
   if (value instanceof Uint8Array) return new Uint8Array(value);
   if (value instanceof ArrayBuffer) return value.slice(0);
   if (value instanceof Date) return new Date(value.getTime());
+  // A source is never read here: its declaration stands for its bytes.
+  if (value instanceof UploadSource) return value;
   if (typeof Blob !== "undefined" && value instanceof Blob) {
     const blob = Blob.prototype.slice.call(value, 0, value.size, value.type) as Blob;
     return typeof File !== "undefined" && value instanceof File
@@ -73,6 +76,10 @@ export function argumentSnapshot(value: unknown, stack = new Set<object>()): unk
 
 /** Content and multipart filename/type participate; random boundaries do not. */
 async function digestValue(value: unknown, path: string[], binaries: unknown[]): Promise<unknown> {
+  if (value instanceof UploadSource) {
+    binaries.push({ path, upload: { length: value.length, sha256: value.sha256 } });
+    return null;
+  }
   if (typeof Blob !== "undefined" && value instanceof Blob) {
     const content = await sha256Hex(new Uint8Array(await value.arrayBuffer()));
     binaries.push({ path, content, type: value.type,

@@ -34,9 +34,16 @@ export function utf8Length(text: string): number {
   return bytes;
 }
 
+/**
+ * One completed SSE event before JSON decoding. Use EventStream for
+ * validated operation events and transport/reconnect behavior.
+ */
 export interface SseEvent {
   /** The `event` field, `message` when the event has none. */
   event: string;
+  /**
+   * Joined data lines, separated by LF; still raw text rather than parsed JSON.
+   */
   data: string;
   /** The last event id seen so far (it survives across events), or null. */
   id: string | null;
@@ -44,6 +51,11 @@ export interface SseEvent {
   retry: number | null;
 }
 
+/**
+ * Incremental parser for decoded SSE text. Reuse an instance across
+ * chunks of one connection, call end at EOF, and inspect exceeded after
+ * each push. It performs no fetch, JSON decoding or reconnection.
+ */
 export class SseParser {
   #buffer: string[] = [];
   #started = false;
@@ -58,6 +70,10 @@ export class SseParser {
   #exceeded = false;
   readonly #max: number;
 
+  /**
+   * Create a parser with a per-event UTF-8 byte limit.
+   * @param maxEventBytes Limit for retained field lines and the pending line.
+   */
   constructor(maxEventBytes: number = DEFAULT_MAX_EVENT_BYTES) {
     this.#max = maxEventBytes;
   }

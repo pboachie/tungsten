@@ -3,7 +3,6 @@
 //! `$ref` resolution across files and the reference graph.
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -12,16 +11,21 @@ use tungsten_core::{Diagnostic, Digest, Label, SourceId};
 use crate::overlay::{self, Overlay};
 use crate::parse::{self, Parsed};
 use crate::refs::{Reference, lexical_normalize, parse_reference};
-use crate::walk::{Kind, walk};
+use crate::source::too_big;
+use crate::spans::SpanIndex;
+use crate::walk::{Kind, walk_cancellable};
 use crate::{
     DocId, Document, LoadEntry, LoadOptions, RefTarget, SpecVersion, Workspace, graph, normalize,
-    version,
+    v32, version,
 };
 
 /// Load entry documents and everything they reference.
 pub fn load(entries: &[LoadEntry], opts: &LoadOptions) -> Workspace {
     let mut loader = Loader::new(opts);
     for entry in entries {
+        if opts.cancellation.is_cancelled() {
+            break;
+        }
         let doc = loader.load_entry(entry);
         loader.ws.entry_docs.push(doc);
     }
@@ -49,48 +53,6 @@ pub fn load_str(name: &str, text: &str, opts: &LoadOptions) -> Workspace {
     loader.finish()
 }
 
-fn too_big(name: &str, max: usize) -> Diagnostic {
-    Diagnostic::error(
-        "TG0105",
-        format!("{name} exceeds the size limit of {max} bytes"),
-    )
-}
-
-/// Read at most `max` bytes of UTF-8 text, with the digest of the bytes.
-/// Only regular files (after symlinks) are opened: a directory, a named
-/// pipe or a device is TG0101, so a FIFO never blocks the compiler.
-fn read_limited(path: &Path, name: &str, max: usize) -> Result<(String, Digest), Diagnostic> {
-    let cannot_read =
-        |e: std::io::Error| Diagnostic::error("TG0101", format!("cannot read {name}: {e}"));
-    let meta = std::fs::metadata(path).map_err(cannot_read)?;
-    if !meta.is_file() {
-        return Err(Diagnostic::error(
-            "TG0101",
-            format!("cannot read {name}: not a regular file"),
-        ));
-    }
-    let file = std::fs::File::open(path).map_err(cannot_read)?;
-    let mut bytes = vec![];
-    file.take(max as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(cannot_read)?;
-    if bytes.len() > max {
-        return Err(too_big(name, max));
-    }
-    let digest = Digest::of(&bytes);
-    String::from_utf8(bytes)
-        .map(|text| (text, digest))
-        .map_err(|e| {
-            Diagnostic::error(
-                "TG0102",
-                format!(
-                    "{name} is not valid UTF-8 (byte {})",
-                    e.utf8_error().valid_up_to()
-                ),
-            )
-        })
-}
-
 /// Where a file was referenced from, for diagnostics about that file.
 #[derive(Debug, Clone)]
 struct Site {
@@ -108,6 +70,17 @@ struct RefSite {
     reference: Value,
 }
 
+/// A fragment inherits its dialect along the reference path. Security
+/// requirement names retain the input namespace's entry-document scope,
+/// matching the builder even when a complete referenced document changes
+/// the dialect used for its own fragments.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct WalkContext {
+    v30: bool,
+    v32: bool,
+    entry: DocId,
+}
+
 /// An input root: the directory of an entry document. File references
 /// must stay inside one of them.
 #[derive(Debug)]
@@ -120,6 +93,7 @@ struct Root {
 
 struct Loader<'o> {
     opts: &'o LoadOptions,
+    disk: crate::SourceProvider,
     ws: Workspace,
     /// The directory of every entry document, in entry order.
     roots: Vec<Root>,
@@ -134,18 +108,24 @@ struct Loader<'o> {
     schema_targets: BTreeSet<RefTarget>,
     /// Referenced files that could not be read or parsed.
     failed_files: BTreeSet<PathBuf>,
+    reported_v32: v32::Reported,
 }
 
 impl<'o> Loader<'o> {
     fn new(opts: &'o LoadOptions) -> Self {
         Self {
             opts,
-            ws: Workspace::default(),
+            disk: crate::SourceProvider::default(),
+            ws: Workspace {
+                cancellation: opts.cancellation.clone(),
+                ..Workspace::default()
+            },
             roots: vec![],
             dialect30: vec![],
             fragment_roots: vec![],
             schema_targets: BTreeSet::new(),
             failed_files: BTreeSet::new(),
+            reported_v32: v32::Reported::default(),
         }
     }
 
@@ -185,7 +165,10 @@ impl<'o> Loader<'o> {
                     return None;
                 }
             };
-            let (text, digest) = self.read(&path, name, None)?;
+            let (text, digest) = crate::SourceProvider::default()
+                .read(&path, name, self.opts.max_bytes)
+                .map_err(|d| self.ws.diagnostics.push(d.at(name, "", None)))
+                .ok()?;
             let source = self.ws.sources.add(name, text);
             let parsed = self.parse(name, source, None)?;
             let overlays = entry
@@ -197,10 +180,19 @@ impl<'o> Loader<'o> {
             // `$ref`s must never gain access to files beside the download cache.
             return self.add_entry(name, None, parsed, source, digest, &overlays);
         }
-        let (text, digest) = self.read(&entry.path, name, None)?;
+        let (text, digest) = if crate::git_input::is_source(name) {
+            crate::SourceProvider::default()
+                .read(&entry.path, name, self.opts.max_bytes)
+                .map_err(|d| self.ws.diagnostics.push(d.at(name, "", None)))
+                .ok()?
+        } else {
+            self.read(&entry.path, name, None)?
+        };
         let lexical = absolute(&entry.path);
-        if let (Some(dir), Ok(canonical)) = (lexical.parent(), std::fs::canonicalize(&lexical))
-            && let Some(canonical_dir) = canonical.parent()
+        if let (Some(dir), Some(canonical)) = (
+            lexical.parent(),
+            self.sources(&lexical).canonical_path(&lexical),
+        ) && let Some(canonical_dir) = canonical.parent()
             && !self.roots.iter().any(|r| r.canonical == canonical_dir)
         {
             let display = match name.rfind('/') {
@@ -238,6 +230,9 @@ impl<'o> Loader<'o> {
             mut spans,
         } = parsed;
         for (overlay_path, overlay_name) in overlays {
+            if self.ws.is_cancelled() {
+                return None;
+            }
             let Some((text, overlay_digest)) = self.read(overlay_path, overlay_name, None) else {
                 continue;
             };
@@ -291,12 +286,39 @@ impl<'o> Loader<'o> {
         if v30 {
             normalize::normalize(&mut root, &mut spans, &mut moves, "", Kind::Document);
         }
+        self.diagnose_v32(&version, &root, name, &spans);
         let mut doc = Document::new(source, name.to_string(), version, root, digest);
         doc.spans = spans;
         doc.moves = moves;
         let id = self.push(doc, path, v30);
         self.ws.entries.push(id);
         Some(id)
+    }
+
+    /// Report the constructs a 3.2 document uses that 3.1 does not have.
+    fn diagnose_v32(&mut self, version: &SpecVersion, root: &Value, name: &str, spans: &SpanIndex) {
+        if matches!(version, SpecVersion::V32(_)) {
+            for finding in v32::scan_document(root) {
+                self.ws
+                    .diagnostics
+                    .push(finding.into_diagnostic(name, spans));
+            }
+        }
+    }
+
+    /// A fragment reached from a 3.2 document is read as 3.2: the subtree
+    /// the reference selects is checked like the document itself.
+    fn diagnose_fragment_v32(&mut self, target: &RefTarget, kind: Kind) {
+        let document = &self.ws.documents[target.doc];
+        let Some(value) = document.get(&target.pointer) else {
+            return;
+        };
+        for finding in v32::scan_subtree(value, &target.pointer, kind) {
+            if self.reported_v32.first(target.doc, &finding) {
+                let diagnostic = finding.into_diagnostic(&document.name, &document.spans);
+                self.ws.diagnostics.push(diagnostic);
+            }
+        }
     }
 
     fn push(&mut self, mut doc: Document, path: Option<PathBuf>, v30: bool) -> DocId {
@@ -316,7 +338,7 @@ impl<'o> Loader<'o> {
     /// Read a file under the size limit. Problems are reported at `site`
     /// when the file was referenced, otherwise at the file itself.
     fn read(&mut self, path: &Path, name: &str, site: Option<&Site>) -> Option<(String, Digest)> {
-        match read_limited(path, name, self.opts.max_bytes) {
+        match self.sources(path).read(path, name, self.opts.max_bytes) {
             Ok(read) => Some(read),
             Err(d) => {
                 match site {
@@ -328,6 +350,20 @@ impl<'o> Loader<'o> {
         }
     }
 
+    /// Acquired bytes and their complete pinned reference tree are disk-only.
+    /// Check physical identities too, including a new file's existing parent,
+    /// so an alias or unsaved dependency cannot bypass acquisition verification.
+    fn sources(&self, path: &Path) -> &crate::SourceProvider {
+        let cache = self.opts.acquisition_root.join(".tungsten-inputs");
+        if absolute(path).starts_with(absolute(&cache))
+            || crate::SourceProvider::key(path).starts_with(crate::SourceProvider::key(&cache))
+        {
+            &self.disk
+        } else {
+            &self.opts.sources
+        }
+    }
+
     /// Parse the registered source `source`; `format_name` (a path or name)
     /// picks JSON or YAML.
     fn parse(
@@ -336,6 +372,9 @@ impl<'o> Loader<'o> {
         source: SourceId,
         site: Option<&Site>,
     ) -> Option<Parsed> {
+        if self.ws.is_cancelled() {
+            return None;
+        }
         let text = &self.ws.sources.get(source).text;
         let error = match parse::parse(format_name, text, source, self.opts.max_depth) {
             Ok(p) => return Some(p),
@@ -354,7 +393,13 @@ impl<'o> Loader<'o> {
 
     fn finish(mut self) -> Workspace {
         self.resolve_all();
+        if self.ws.is_cancelled() {
+            return self.ws;
+        }
         self.normalize_fragments();
+        if self.ws.is_cancelled() {
+            return self.ws;
+        }
         let mut diags = std::mem::take(&mut self.ws.diagnostics);
         self.ws.graph = graph::build(&self.ws, &self.schema_targets, &mut diags);
         self.ws.diagnostics = diags;
@@ -364,30 +409,45 @@ impl<'o> Loader<'o> {
     /// Walk every entry document, follow every `$ref`, load referenced
     /// files, and report the references that cannot be followed. Each walk
     /// carries the dialect of the entry it started from, so a fragment
-    /// subtree reached from a 3.0 document is normalized even when a 3.1
-    /// document reached it first.
+    /// subtree reached from a 3.0 document is normalized, and one reached
+    /// from a 3.2 document is diagnosed, even when a 3.1 document reached
+    /// either first. The security-name scope also travels with each walk.
     fn resolve_all(&mut self) {
-        let mut queue: VecDeque<(DocId, String, Kind, bool)> = self
+        let mut queue: VecDeque<(DocId, String, Kind, WalkContext)> = self
             .ws
             .entries
             .iter()
-            .map(|&d| (d, String::new(), Kind::Document, self.dialect30[d]))
+            .map(|&d| {
+                (
+                    d,
+                    String::new(),
+                    Kind::Document,
+                    WalkContext {
+                        v30: self.dialect30[d],
+                        v32: matches!(self.ws.documents[d].version, SpecVersion::V32(_)),
+                        entry: d,
+                    },
+                )
+            })
             .collect();
         let mut seen_roots = HashSet::new();
         // Each `$ref` is followed (and reported) once, whatever walks reach it.
         let mut followed: HashMap<(DocId, String), Option<RefTarget>> = HashMap::new();
-        while let Some((doc, pointer, kind, v30)) = queue.pop_front() {
-            if !seen_roots.insert((doc, pointer.clone(), kind, v30)) {
+        while let Some((doc, pointer, kind, context)) = queue.pop_front() {
+            if self.ws.is_cancelled() {
+                return;
+            }
+            if !seen_roots.insert((doc, pointer.clone(), kind, context)) {
                 continue;
             }
-            if v30 && matches!(self.ws.documents[doc].version, SpecVersion::Fragment) {
+            if context.v30 && matches!(self.ws.documents[doc].version, SpecVersion::Fragment) {
                 self.fragment_roots.push((doc, pointer.clone(), kind));
             }
             let Some(start) = self.ws.documents[doc].get(&pointer) else {
                 continue;
             };
             let mut sites = vec![];
-            walk(start, &pointer, kind, |node| {
+            walk_cancellable(start, &pointer, kind, &self.opts.cancellation, |node| {
                 if let Some(r) = node.reference() {
                     sites.push(RefSite {
                         pointer: node.pointer.clone(),
@@ -398,6 +458,9 @@ impl<'o> Loader<'o> {
                 true
             });
             for site in sites {
+                if self.ws.is_cancelled() {
+                    return;
+                }
                 let key = (doc, site.pointer.clone());
                 let target = match followed.get(&key) {
                     Some(known) => known.clone(),
@@ -415,11 +478,24 @@ impl<'o> Loader<'o> {
                 if let Some(target) = target {
                     // A fragment is read in the dialect of whoever reaches
                     // it; an entry document keeps its own.
-                    let target_v30 = match self.ws.documents[target.doc].version {
-                        SpecVersion::Fragment => v30,
-                        _ => self.dialect30[target.doc],
+                    let fragment =
+                        matches!(self.ws.documents[target.doc].version, SpecVersion::Fragment);
+                    let target_context = if fragment {
+                        context
+                    } else {
+                        WalkContext {
+                            v30: self.dialect30[target.doc],
+                            v32: matches!(
+                                self.ws.documents[target.doc].version,
+                                SpecVersion::V32(_)
+                            ),
+                            ..context
+                        }
                     };
-                    queue.push_back((target.doc, target.pointer, site.kind, target_v30));
+                    if fragment && target_context.v32 {
+                        self.diagnose_fragment_v32(&target, site.kind);
+                    }
+                    queue.push_back((target.doc, target.pointer, site.kind, target_context));
                 }
             }
         }
@@ -529,7 +605,7 @@ impl<'o> Loader<'o> {
             self.report(at, outside());
             return None;
         }
-        let Ok(canonical) = std::fs::canonicalize(&lexical) else {
+        let Some(canonical) = self.sources(&lexical).canonical_path(&lexical) else {
             self.report(
                 at,
                 Diagnostic::error(
@@ -608,6 +684,7 @@ impl<'o> Loader<'o> {
         if v30 {
             normalize::normalize(&mut root, &mut spans, &mut moves, "", Kind::Document);
         }
+        self.diagnose_v32(&version, &root, &name, &spans);
         let mut doc = Document::new(source, name, version, root, digest);
         doc.spans = spans;
         doc.moves = moves;

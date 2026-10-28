@@ -42,9 +42,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # setup-python's archive installer upgrades pip before returning; force
+      # that bootstrap to use only the PSF hash-verified local wheel.
+      - name: Stage verified pip for interpreter setup
+        shell: bash
+        run: python -I crates/tungsten-cli/src/commands/bootstrap_python.py --fetch-only --wheel-dir "$RUNNER_TEMP/tungsten-pip-bootstrap"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        env:
+          PIP_CONFIG_FILE: ${{ runner.os == 'Windows' && 'nul' || '/dev/null' }}
+          PIP_NO_INDEX: "1"
+          PIP_FIND_LINKS: ${{ runner.temp }}/tungsten-pip-bootstrap/pip-26.2.2-py3-none-any.whl
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
         with:
-          python-version: "3.12"
+          python-version: "3.12.15"
+          check-latest: true
       - name: Read and check declared floors
         id: floors
         run: python3 .github/scripts/check-msrv.py --toolchains >> "$GITHUB_OUTPUT"
@@ -86,6 +97,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo build --locked
+      - name: README support matrix matches the capability catalog
+        run: python3 .github/scripts/check-support-matrix.py --tungsten target/debug/tungsten
       # The example external emitter is its own package (examples/ is excluded
       # from the workspace); its end-to-end test runs in tungsten-ops.
       - name: Example external emitter fmt, clippy, build
@@ -118,9 +131,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # setup-python's archive installer upgrades pip before returning; force
+      # that bootstrap to use only the PSF hash-verified local wheel.
+      - name: Stage verified pip for interpreter setup
+        shell: bash
+        run: python -I crates/tungsten-cli/src/commands/bootstrap_python.py --fetch-only --wheel-dir "$RUNNER_TEMP/tungsten-pip-bootstrap"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        env:
+          PIP_CONFIG_FILE: ${{ runner.os == 'Windows' && 'nul' || '/dev/null' }}
+          PIP_NO_INDEX: "1"
+          PIP_FIND_LINKS: ${{ runner.temp }}/tungsten-pip-bootstrap/pip-26.2.2-py3-none-any.whl
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
         with:
-          python-version: "3.12"
+          python-version: "3.12.15"
+          check-latest: true
       - name: Check all committed Cargo, npm and uv locks without installing packages
         run: python3 .github/scripts/dependency_audit.py
       - name: Check lockstep runtime manifests and identities
@@ -136,9 +160,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # setup-python's archive installer upgrades pip before returning; force
+      # that bootstrap to use only the PSF hash-verified local wheel.
+      - name: Stage verified pip for interpreter setup
+        shell: bash
+        run: python -I crates/tungsten-cli/src/commands/bootstrap_python.py --fetch-only --wheel-dir "$RUNNER_TEMP/tungsten-pip-bootstrap"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        env:
+          PIP_CONFIG_FILE: ${{ runner.os == 'Windows' && 'nul' || '/dev/null' }}
+          PIP_NO_INDEX: "1"
+          PIP_FIND_LINKS: ${{ runner.temp }}/tungsten-pip-bootstrap/pip-26.2.2-py3-none-any.whl
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
         with:
-          python-version: "3.12"
+          python-version: "3.12.15"
+          check-latest: true
       # Keep this inside the existing required cargo-deny job, so an audit
       # failure cannot be ignored as an optional status check.
       - name: Check all committed dependency and release-tool locks without installing packages
@@ -170,7 +205,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.24"
+          go-version: "1.26.10"
           cache: false
       - name: gofmt
         run: |
@@ -203,7 +238,12 @@ jobs:
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "21.0.13+9.0.LTS"
+          check-latest: true
+      - name: Prepare job-local Java TLS trust
+        run: python3 .github/scripts/prepare_java_ci_trust.py --major 21
+      - name: Verify patched Java runtime and trust roots
+        run: python3 .github/scripts/check_java_toolchain.py --major 21
       - name: javac --release 17 -Xlint:all -Werror
         working-directory: runtimes/java
         run: |
@@ -216,7 +256,9 @@ jobs:
         run: python3 .github/scripts/check-archive-notices.py runtimes/java/target/tungsten-runtime-*.jar runtimes/java --prefix META-INF/
 
   # The Kotlin layer (runtimes/kotlin) compiled against the Java runtime's
-  # classes with kotlinc -Werror; its tests, and the build of the SDKs the
+  # classes with kotlinc -Werror, and the opt-in coroutines layer
+  # (runtimes/kotlin/coroutines) against a pinned, checksum-verified
+  # kotlinx-coroutines-core jar; their tests, and the build of the SDKs the
   # Kotlin emitter generates, run in tungsten-ops.
   kotlin:
     name: kotlin runtime build
@@ -227,6 +269,8 @@ jobs:
     env:
       KOTLIN_VERSION: "2.4.21"
       KOTLIN_SHA256: 7cc140e76daf416a0424a5557f99afd7ca89ebd463ea1101261e3e01c33e75cd
+      KOTLINX_COROUTINES_VERSION: "1.10.2"
+      KOTLINX_COROUTINES_SHA256: 5ca175b38df331fd64155b35cd8cae1251fa9ee369709b36d42e0a288ccce3fd
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -234,7 +278,12 @@ jobs:
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "21.0.13+9.0.LTS"
+          check-latest: true
+      - name: Prepare job-local Java TLS trust
+        run: python3 .github/scripts/prepare_java_ci_trust.py --major 21
+      - name: Verify patched Java runtime and trust roots
+        run: python3 .github/scripts/check_java_toolchain.py --major 21
       - name: Install kotlinc (sha256 checked)
         run: |
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/kotlin.zip" \
@@ -250,6 +299,15 @@ jobs:
         run: |
           find runtimes/kotlin/src/main/kotlin -name '*.kt' | sort > "$RUNNER_TEMP/kotlin.txt"
           kotlinc -Werror -jvm-target 17 -Xexplicit-api=strict -cp "$RUNNER_TEMP/java" -d "$RUNNER_TEMP/kotlin-classes" "@$RUNNER_TEMP/kotlin.txt"
+      - name: Fetch kotlinx-coroutines-core (sha256 checked)
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/kotlinx-coroutines.jar" \
+            "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/$KOTLINX_COROUTINES_VERSION/kotlinx-coroutines-core-jvm-$KOTLINX_COROUTINES_VERSION.jar"
+          echo "$KOTLINX_COROUTINES_SHA256  $RUNNER_TEMP/kotlinx-coroutines.jar" | sha256sum -c -
+      - name: kotlinc -Werror -jvm-target 17 (runtimes/kotlin/coroutines)
+        run: |
+          find runtimes/kotlin/coroutines/src/main/kotlin -name '*.kt' | sort > "$RUNNER_TEMP/coroutines.txt"
+          kotlinc -Werror -jvm-target 17 -Xexplicit-api=strict -cp "$RUNNER_TEMP/java:$RUNNER_TEMP/kotlin-classes:$RUNNER_TEMP/kotlinx-coroutines.jar" -d "$RUNNER_TEMP/coroutines-classes" "@$RUNNER_TEMP/coroutines.txt"
 
   # The .NET runtime (runtimes/csharp, net10.0, no dependencies); its tests,
   # and the build of the SDKs the C# emitter generates, run in tungsten-ops.
@@ -268,7 +326,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 10.0.401
+          dotnet-version: 10.0.402
       - name: dotnet format whitespace
         run: dotnet format whitespace runtimes/csharp --folder --verify-no-changes
       - name: dotnet build -warnaserror
@@ -296,7 +354,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 10.0.401
+          dotnet-version: 10.0.402
       - name: dotnet build -warnaserror
         run: dotnet build runtimes/fsharp/Tungsten.Runtime.FSharp.fsproj -warnaserror --artifacts-path "$RUNNER_TEMP/fsharp"
       - name: Pack and verify runtime notices
@@ -317,9 +375,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ruby/setup-ruby@e81a8fa391b11a595c1b7ed84177cc0fe02faf83 # v1.328.0
+      - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
         with:
-          ruby-version: "3.3"
+          ruby-version: "3.3.13"
           bundler-cache: false
       - name: ruby -wc
         run: |
@@ -349,7 +407,7 @@ jobs:
           persist-credentials: false
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
         with:
-          sdk: 3.13.5
+          sdk: 3.13.7
       - name: dart pub get
         working-directory: runtimes/dart
         run: dart pub get

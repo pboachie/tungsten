@@ -153,6 +153,64 @@ ir_struct! {
         /// decode their error bodies.
         #[serde(default)]
         pub errors: ErrorModel,
+        /// The wire protocol of this document's operations; absent means
+        /// HTTP. Targets that do not declare the protocol refuse the IR.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub protocol: Option<ProtocolBinding>,
+        /// Incoming webhooks the document declares (OpenAPI 3.1+
+        /// `webhooks`): requests the API sends to the application. They are
+        /// received, never called, so they are not operations.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub webhooks: Vec<Webhook>,
+    }
+}
+
+ir_struct! {
+    /// One incoming webhook: an operation of a `webhooks` entry, in the
+    /// direction API to application.
+    pub struct Webhook {
+        /// Event identity: the `webhooks` key as written, with the method
+        /// word appended to `words` when the entry has several operations.
+        pub name: Ident,
+        pub method: HttpMethod,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub operation_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub doc: Option<Doc>,
+        /// The JSON request body the API delivers; absent when the operation
+        /// declares no JSON body.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub payload: Option<WebhookPayload>,
+        pub source: SourceRef,
+    }
+}
+
+ir_struct! {
+    pub struct WebhookPayload {
+        pub media_type: String,
+        pub ty: TypeRef,
+        /// `requestBody.required`.
+        #[serde(default)]
+        pub required: bool,
+    }
+}
+
+ir_struct! {
+    /// A non-HTTP protocol binding. Operations keep the common contract
+    /// (names, parameters, bodies, responses, errors and agent metadata);
+    /// what that contract cannot express (GraphQL selections, RPC streaming
+    /// modes, broker acknowledgment) goes in `extension`, never in REST
+    /// fields such as `method` or `path`.
+    pub struct ProtocolBinding {
+        /// A protocol id registered in the capability catalog.
+        pub protocol: String,
+        /// The protocol version the document describes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub version: Option<String>,
+        /// Protocol-specific contract, shaped by the frontend that owns the
+        /// protocol and versioned with it.
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        pub extension: serde_json::Value,
     }
 }
 
@@ -201,13 +259,40 @@ pub enum HttpMethod {
     Head,
     Patch,
     Trace,
+    /// OpenAPI 3.2 `query`: a safe, idempotent request that carries a body.
+    Query,
+    /// An OpenAPI 3.2 `additionalOperations` method. The token sent on the
+    /// wire is `Operation::custom_method`; nothing is assumed about its
+    /// semantics, so it is treated as unsafe and not idempotent.
+    Custom,
 }
 
 impl HttpMethod {
+    /// The standard method name; `Custom` has no name of its own (see
+    /// `Operation::wire_method`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HttpMethod::Get => "GET",
+            HttpMethod::Put => "PUT",
+            HttpMethod::Post => "POST",
+            HttpMethod::Delete => "DELETE",
+            HttpMethod::Options => "OPTIONS",
+            HttpMethod::Head => "HEAD",
+            HttpMethod::Patch => "PATCH",
+            HttpMethod::Trace => "TRACE",
+            HttpMethod::Query => "QUERY",
+            HttpMethod::Custom => "CUSTOM",
+        }
+    }
+
     pub fn is_safe(self) -> bool {
         matches!(
             self,
-            HttpMethod::Get | HttpMethod::Head | HttpMethod::Options | HttpMethod::Trace
+            HttpMethod::Get
+                | HttpMethod::Head
+                | HttpMethod::Options
+                | HttpMethod::Trace
+                | HttpMethod::Query
         )
     }
 }
@@ -221,6 +306,10 @@ ir_struct! {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub operation_id: Option<String>,
         pub method: HttpMethod,
+        /// The method token sent on the wire, exactly as written, when
+        /// `method` is `Custom`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub custom_method: Option<String>,
         pub path: PathTemplate,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub doc: Option<Doc>,
@@ -254,6 +343,41 @@ ir_struct! {
         #[serde(default)]
         pub agent: OperationAgentMeta,
         pub source: SourceRef,
+    }
+}
+
+impl Operation {
+    /// The method token sent on the wire (`GET`, or a custom token).
+    pub fn wire_method(&self) -> &str {
+        match (self.method, &self.custom_method) {
+            (HttpMethod::Custom, Some(token)) => token,
+            (method, _) => method.as_str(),
+        }
+    }
+
+    /// Whether the operation's request body is a whole binary body
+    /// (`BodyEncoding::Bytes`), which SDKs can also stream from an upload
+    /// source.
+    pub fn binary_body(&self) -> bool {
+        self.body
+            .as_ref()
+            .and_then(|b| b.content.first())
+            .is_some_and(|c| c.encoding == BodyEncoding::Bytes)
+    }
+
+    /// Whether a 2xx success response of the operation carries a binary
+    /// body (`BodyEncoding::Bytes`), which SDKs can also hand over streamed,
+    /// as a download. An operation with an event stream never does.
+    pub fn binary_success(&self) -> bool {
+        self.stream.is_none()
+            && self.responses.iter().any(|r| {
+                r.kind == ResponseKind::Success
+                    && matches!(
+                        r.status,
+                        StatusMatch::Exact(200..=299) | StatusMatch::Range(2)
+                    )
+                    && r.content.iter().any(|c| c.encoding == BodyEncoding::Bytes)
+            })
     }
 }
 
@@ -345,6 +469,9 @@ pub enum ParamStyle {
     SpaceDelimited,
     PipeDelimited,
     DeepObject,
+    /// OpenAPI 3.2 `cookie`: RFC 6265 pairs (`n=v; n2=v2`), values sent as
+    /// written.
+    Cookie,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -401,6 +528,37 @@ ir_struct! {
         pub media_type: String,
         pub ty: TypeRef,
         pub encoding: BodyEncoding,
+        /// The per-part encoding of a [`BodyEncoding::Multipart`] request
+        /// body: one entry per property named in the media type's
+        /// `encoding` map that declares something the compiler models, in
+        /// spec order.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub parts: Vec<PartEncoding>,
+    }
+}
+
+ir_struct! {
+    /// One entry of a multipart body's `encoding` map.
+    pub struct PartEncoding {
+        /// The wire name of the property the part carries.
+        pub name: String,
+        /// The part's media type: the first concrete (wildcard-free) entry of
+        /// the Encoding Object's `contentType` list.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub content_type: Option<String>,
+        /// Headers sent on each part of the property: the Encoding Object's
+        /// `headers` whose schema fixes one value (`const`, or an `enum` of
+        /// one value), in spec order.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub headers: Vec<PartHeader>,
+    }
+}
+
+ir_struct! {
+    /// A header with a fixed value on a multipart part.
+    pub struct PartHeader {
+        pub name: String,
+        pub value: String,
     }
 }
 
@@ -585,7 +743,8 @@ impl AuthScheme {
 
 ir_struct! {
     pub struct OAuthFlow {
-        /// `clientCredentials`, `authorizationCode`, `password`, `implicit`.
+        /// `clientCredentials`, `authorizationCode`, `password`, `implicit`,
+        /// or (OpenAPI 3.2) `deviceAuthorization`.
         pub kind: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub token_url: Option<String>,
@@ -595,6 +754,11 @@ ir_struct! {
         pub refresh_url: Option<String>,
         #[serde(default)]
         pub scopes: BTreeMap<String, String>,
+        /// The device authorization endpoint of a `deviceAuthorization`
+        /// flow (RFC 8628). Generated clients do not run the device flow;
+        /// they accept an access token obtained through it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub device_authorization_url: Option<String>,
     }
 }
 
@@ -691,8 +855,9 @@ ir_struct! {
         pub status: StatusMatch,
         /// The event stream media type as the spec wrote it.
         pub media_type: String,
-        /// The type every event's `data` (JSON) is checked against: the
-        /// schema of the media type, usually a union tagged by `type`.
+        /// The type every event's `data` (JSON, or text with `text_data`) is
+        /// checked against: the schema of the media type, usually a union
+        /// tagged by `type`.
         pub event: TypeRef,
         /// A `data` value that ends the stream and is not an event
         /// (`[DONE]`); declared with `x-tungsten-stream-done`.
@@ -706,6 +871,11 @@ ir_struct! {
         /// stream, which the plain method returns.
         #[serde(default)]
         pub also_plain: bool,
+        /// Whether every event's `data` is text taken as written rather
+        /// than JSON (an OpenAPI 3.2 `itemSchema` whose `data` is a plain
+        /// string); `event` is then a string type.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pub text_data: bool,
     }
 }
 
@@ -739,6 +909,18 @@ ir_struct! {
 }
 
 impl Ir {
+    /// The protocol ids the namespaces bind, sorted and deduplicated; empty
+    /// when every namespace is implicitly HTTP.
+    pub fn protocols(&self) -> Vec<&str> {
+        let ids: std::collections::BTreeSet<&str> = self
+            .namespaces
+            .iter()
+            .filter_map(|namespace| namespace.protocol.as_ref())
+            .map(|binding| binding.protocol.as_str())
+            .collect();
+        ids.into_iter().collect()
+    }
+
     /// All callable operations in deterministic order (namespace, then
     /// depth-first resource order).
     pub fn operations(&self) -> Vec<&Operation> {

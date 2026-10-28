@@ -61,7 +61,7 @@ pub(crate) fn package_json(ir: &Ir, opts: &Options) -> String {
         "type": "module",
         "bin": bin,
         "files": files,
-        "engines": { "node": ">=22" },
+        "engines": { "node": "^22.13.0 || >=23.2.0" },
         "scripts": {
             "build": "tsc -p tsconfig.json",
             "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -219,9 +219,10 @@ pub(crate) fn server_ts(ir: &Ir, opts: &Options, manifest: &McpManifest) -> Stri
     }
     out.push_str("};\n");
     out.push_str(&format!(
-        "const BASE_URL_ENV = {};\nconst MODE_ENV = {};\n\n",
+        "const BASE_URL_ENV = {};\nconst MODE_ENV = {};\nconst DEADLINE_ENV = {};\n\n",
         ts_string(&env::base_url(ir)),
-        ts_string(&env::mode(ir))
+        ts_string(&env::mode(ir)),
+        ts_string(&env::deadline(ir))
     ));
     out.push_str(SERVER_HELPERS);
     out.push('\n');
@@ -248,6 +249,13 @@ pub(crate) fn server_ts(ir: &Ir, opts: &Options, manifest: &McpManifest) -> Stri
     out.push_str("  };\n");
     out.push_str("  const mode = modeOverride();\n");
     out.push_str("  if (mode !== undefined) options.mode = mode;\n");
+    out.push_str("  const deadline = deadlineMs();\n");
+    out.push_str(
+        "  // Assigned this way so the server still builds against a runtime without the option.\n",
+    );
+    out.push_str(
+        "  if (deadline !== undefined) Object.assign(options, { toolDeadlineMs: deadline });\n",
+    );
     out.push_str(&format!(
         "  await serve(createTungstenMcpServer(customize(options)), args, {});\n",
         ts_string(&opts.bin)
@@ -299,10 +307,19 @@ function modeOverride(): "discrete" | "progressive" | undefined {
   if (mode === undefined || mode === "discrete" || mode === "progressive") return mode;
   throw new Error(`${MODE_ENV} must be "discrete" or "progressive", not ${JSON.stringify(mode)}`);
 }
+
+/** The total deadline of one tool call set by the environment, if any. */
+function deadlineMs(): number | undefined {
+  const text = env(DEADLINE_ENV);
+  if (text === undefined) return undefined;
+  const value = Number(text);
+  if (/^[0-9]+$/.test(text) && Number.isSafeInteger(value)) return value === 0 ? undefined : value;
+  throw new Error(`${DEADLINE_ENV} must be a whole number of milliseconds, not ${JSON.stringify(text)}`);
+}
 "#;
 
 /// Every variable of `.env.example` and the README: `(name, what)`.
-fn variables(ir: &Ir) -> Vec<(String, String)> {
+pub(crate) fn variables(ir: &Ir) -> Vec<(String, String)> {
     let mut out = vec![(
         env::base_url(ir),
         match ir.api.servers.first() {
@@ -325,6 +342,10 @@ fn variables(ir: &Ir) -> Vec<(String, String)> {
     out.push((
         env::mode(ir),
         "`discrete` or `progressive`: overrides the generated disclosure mode.".into(),
+    ));
+    out.push((
+        env::deadline(ir),
+        "Total deadline of one tool call in milliseconds, across authentication, retries and verification (default none; 0 is none). Expiry reports `DEADLINE_EXCEEDED`; a mutation already sent reports `OUTCOME_UNKNOWN`.".into(),
     ));
     out
 }
@@ -396,7 +417,9 @@ pub(crate) fn readme(ir: &Ir, opts: &Options, manifest: &McpManifest, budget: &B
         opts.sdk_package
     ));
 
-    out.push_str("## Run\n\n");
+    out.push_str(
+        "## Run\n\nRequires Node.js 22.13 or newer; Node.js 23 requires 23.2 or newer.\n\n",
+    );
     out.push_str(&format!(
         "```sh\nnpm install\nnpm run build\nnode dist/server.js    # or `{bin}` once installed\n```\n\n\
          The server speaks MCP over stdio by default. `node dist/server.js --http 3000` serves \
@@ -408,7 +431,7 @@ pub(crate) fn readme(ir: &Ir, opts: &Options, manifest: &McpManifest, budget: &B
     out.push_str("Client configuration (the `mcpServers` entry of Claude Desktop, Claude Code and other MCP clients):\n\n");
     let mut env_map = Map::new();
     for (name, _) in variables(ir) {
-        if name != env::mode(ir) {
+        if name != env::mode(ir) && name != env::deadline(ir) {
             env_map.insert(name, json!("..."));
         }
     }

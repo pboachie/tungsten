@@ -56,6 +56,10 @@ fn layer(name: &str) -> String {
 /// The runtime's `Dispatch` interface (the generated class has its name).
 const DISPATCH: &str = "io.github.pboachie.tungsten.runtime.Dispatch";
 
+/// The opt-in coroutines layer's package (functions are called by their
+/// qualified name: a resource member of the same name cannot shadow them).
+const COROUTINES: &str = "io.github.pboachie.tungsten.runtime.kotlin.coroutines";
+
 /// The call options parameter of every typed function.
 const OPTIONS: &str = "options: CallOptions = CallOptions.defaults()";
 
@@ -193,12 +197,7 @@ impl Ctx<'_> {
 
     fn op_label(&self, index: usize) -> String {
         let op = self.plan.operations[index].op;
-        format!(
-            "{} ({} {})",
-            op.id.0,
-            tungsten_emit::sdk::descriptors::method_str(op.method),
-            op.path.raw
-        )
+        format!("{} ({} {})", op.id.0, op.wire_method(), op.path.raw)
     }
 
     fn summary(&self, index: usize) -> String {
@@ -207,6 +206,34 @@ impl Ctx<'_> {
 
     fn resources_package(&self) -> String {
         format!("{}.resources", self.opts.package)
+    }
+
+    /// The names of the opt-in coroutine members of resource `r`, indexed like
+    /// its members (`None` for members without one): `<op>Suspend` for an
+    /// operation, `<pages>Flow` and `<stream>Flow` for the pages and stream
+    /// members. A name another member already has gets a number.
+    fn coroutine_names(&self, r: usize) -> Vec<Option<String>> {
+        let members = &self.names.resources[r].members;
+        let mut taken: std::collections::BTreeSet<String> =
+            members.iter().map(|m| m.name.clone()).collect();
+        members
+            .iter()
+            .map(|m| {
+                let suffix = match m.kind {
+                    MemberKind::Operation(_) => "Suspend",
+                    MemberKind::Pages(_) | MemberKind::Stream(_) => "Flow",
+                    _ => return None,
+                };
+                let mut name = format!("{}{suffix}", m.name);
+                let mut n = 2;
+                while taken.contains(&name) {
+                    name = format!("{}{suffix}{n}", m.name);
+                    n += 1;
+                }
+                taken.insert(name.clone());
+                Some(name)
+            })
+            .collect()
     }
 
     /// The resource classes, the namespace classes: (path, contents).
@@ -234,7 +261,12 @@ impl Ctx<'_> {
             ));
             w.indent();
             let mut first = true;
-            for m in &rn.members {
+            let suspend = if self.opts.coroutines {
+                self.coroutine_names(r)
+            } else {
+                vec![]
+            };
+            for (mi, m) in rn.members.iter().enumerate() {
                 if !first {
                     w.blank();
                 }
@@ -251,7 +283,13 @@ impl Ctx<'_> {
                         );
                         w.line(format!("val {}: {child} = {child}(core)", m.name));
                     }
-                    MemberKind::Operation(o) => self.write_operation(&mut w, &infos[o]),
+                    MemberKind::Operation(o) => {
+                        self.write_operation(&mut w, &infos[o]);
+                        if let Some(Some(name)) = suspend.get(mi) {
+                            w.blank();
+                            self.write_suspend(&mut w, &infos[o], &m.name, name);
+                        }
+                    }
                     MemberKind::Preview(o) => {
                         let info = &infos[o];
                         kdoc(
@@ -293,6 +331,26 @@ impl Ctx<'_> {
                             self.op_const(o),
                             item.full_dec()
                         ));
+                        if let Some(Some(flow)) = suspend.get(mi) {
+                            w.blank();
+                            kdoc(
+                                &mut w,
+                                &format!(
+                                    "The pages of {} as a cold Flow: each collection starts a new pagination and a page is requested only when the collector takes the previous one (add buffer(n) to prefetch up to n pages). maxResponseBytes and pagination cycle detection apply to every page; an error is the last element. Cancelling the collector cancels the request in flight.",
+                                    self.op_label(o)
+                                ),
+                            );
+                            w.line(format!(
+                                "fun {flow}({}, {OPTIONS}): kotlinx.coroutines.flow.Flow<Result<Page<{}>>> =",
+                                infos[o].request_param(),
+                                item.full()
+                            ));
+                            w.line(format!(
+                                "    {COROUTINES}.pagesFlow {{ Typed.pages(core, {}, request, options, {}) }}",
+                                self.op_const(o),
+                                item.full_dec()
+                            ));
+                        }
                     }
                     MemberKind::Stream(o) => {
                         let (name, event) = infos[o]
@@ -316,6 +374,26 @@ impl Ctx<'_> {
                             self.op_const(o),
                             event.full_dec()
                         ));
+                        if let Some(Some(flow)) = suspend.get(mi) {
+                            w.blank();
+                            kdoc(
+                                &mut w,
+                                &format!(
+                                    "The server-sent events of {} as a cold Flow: each collection opens a new stream, events are read only as the collector takes them (add buffer(n) to prefetch up to n events), and the stream is closed when the flow completes, fails or is cancelled. An error is the last element.",
+                                    self.op_label(o)
+                                ),
+                            );
+                            w.line(format!(
+                                "fun {flow}({}, {OPTIONS}): kotlinx.coroutines.flow.Flow<Result<StreamEvent<{}>>> =",
+                                infos[o].request_param(),
+                                event.full()
+                            ));
+                            w.line(format!(
+                                "    {COROUTINES}.eventsFlow {{ Typed.stream(core, {}, request, options, {}) }}",
+                                self.op_const(o),
+                                event.full_dec()
+                            ));
+                        }
                     }
                 }
             }
@@ -338,6 +416,10 @@ impl Ctx<'_> {
                 layer("Patch"),
                 format!("{}.Ops", self.opts.package),
             ];
+            if self.opts.coroutines {
+                // Only the opt-in Flow signatures name them.
+                imports.extend([runtime("Page"), runtime("StreamEvent")]);
+            }
             // Models are imported by name, not with a star import: a
             // default import (`kotlin.annotation.Target`, `java.lang.Error`)
             // would win over a star-imported model of the same name.
@@ -410,6 +492,25 @@ impl Ctx<'_> {
         ));
     }
 
+    /// The opt-in `suspend` variant of the blocking function `blocking`.
+    fn write_suspend(&self, w: &mut Writer, info: &OpInfo, blocking: &str, name: &str) {
+        kdoc(
+            w,
+            &format!(
+                "Calls {} without blocking the caller's thread (on Dispatchers.IO) and returns the same Result as {blocking}. Cancelling the coroutine cancels the request in flight and ends the call with a CancellationException instead of a Result; a mutation cancelled after it was sent has an unknown outcome, so reuse its idempotency key to repeat it.",
+                self.op_label(info.index)
+            ),
+        );
+        w.line(format!(
+            "suspend fun {name}({}, {OPTIONS}): Result<{}> =",
+            info.request_param(),
+            info.success.full()
+        ));
+        w.line(format!(
+            "    {COROUTINES}.suspending {{ {blocking}(request, options) }}"
+        ));
+    }
+
     /// The accessor chain of a resource from the client
     /// (`client.public_.webhooks`).
     pub fn accessor(&self, r: usize) -> String {
@@ -468,10 +569,20 @@ impl Ctx<'_> {
             "The SDK descriptor document (the resource tungsten-descriptors.json) and every callable operation as data for the runtime.",
         );
         let no_redirects = self.ir.agent.redirects == tungsten_ir::RedirectPolicy::None;
+        let imported = self
+            .plan
+            .operations
+            .iter()
+            .any(|p| p.op.agent.import_policy.is_some());
         w.block("object Ops {", "}", |w| {
             if no_redirects {
                 kdoc_line(w, "The manifest forbids redirects: the runtime must enforce redirect policy v1.");
                 w.line("init { io.github.pboachie.tungsten.runtime.ClientCore.requireRedirectPolicyV1() }");
+                w.blank();
+            }
+            if imported {
+                kdoc_line(w, "Operations carry imported-operation policy: the runtime must enforce import policy v1.");
+                w.line("init { io.github.pboachie.tungsten.runtime.ClientCore.requireImportPolicyV1() }");
                 w.blank();
             }
             kdoc_line(w, "The descriptor document, loaded once.");
@@ -571,7 +682,7 @@ impl Ctx<'_> {
             w.blank();
             kdoc_line(
                 &mut w,
-                "The authorization-code helpers of an OAuth2 scheme.",
+                "Managed S256/state attempts of an OAuth2 scheme; completion requires its handle, full callback and owning session binding.",
             );
             w.line("fun oauth(scheme: String): OAuthFlow = core.oauth(scheme)");
             if schemes.len() == 1 {

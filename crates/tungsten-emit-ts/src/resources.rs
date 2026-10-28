@@ -15,7 +15,7 @@ use tungsten_ir::naming::Role;
 use tungsten_ir::{IdempotencyKind, OperationStatus, PreviewMode, Safety};
 
 use crate::models::write_imports;
-use crate::ops::{OpShape, idempotency_str, method_str, safety_str};
+use crate::ops::{OpShape, idempotency_str, safety_str};
 use crate::plan::{MemberKind, OpInfo, Plan, ResInfo, unique, with_word};
 use crate::ts::{doc_text, paragraphs, prop_key, string_lit};
 
@@ -58,7 +58,7 @@ pub(crate) fn op_doc(plan: &Plan<'_>, info: &OpInfo<'_>, shape: &OpShape<'_>) ->
     let mut parts = vec![doc_text(op.doc.as_ref())];
     parts.push(format!(
         "`{} {}` (`{}`). Safety: `{}`.",
-        method_str(op.method),
+        op.wire_method(),
         op.path.raw,
         op.id.0,
         safety_str(a.safety)
@@ -204,6 +204,46 @@ fn stream_assignment(
     ]
 }
 
+/// The declared type of the download property of an operation.
+fn download_property_type(info: &OpInfo<'_>, shape: &OpShape<'_>) -> Vec<String> {
+    let args = format!(
+        "args{}: ops.{}",
+        if shape.all_optional { "?" } else { "" },
+        info.args_type
+    );
+    vec![
+        format!("(({args}, opts?: DownloadOptions) => Promise<Result<Download>>) & {{"),
+        "  readonly downloadOf: OperationDescriptor;".into(),
+        "}".into(),
+    ]
+}
+
+/// The constructor assignment of a download property.
+fn download_assignment(member: &str, info: &OpInfo<'_>, shape: &OpShape<'_>) -> Vec<String> {
+    let param = if shape.all_optional {
+        format!("args: ops.{} = {{}}", info.args_type)
+    } else {
+        format!("args: ops.{}", info.args_type)
+    };
+    let d = format!("ops.{}", info.key);
+    vec![
+        format!("this.{member} = Object.assign("),
+        format!("  ({param}, opts?: DownloadOptions) => core.download({d}, args, opts),"),
+        format!("  {{ downloadOf: {d} }},"),
+        ");".into(),
+    ]
+}
+
+/// The TSDoc of the download property of an operation.
+fn download_doc(info: &OpInfo<'_>) -> String {
+    let op = info.op;
+    paragraphs(vec![format!(
+        "`{}` (`{}`) with its binary success body streamed instead of buffered: a `Download` to read chunk by chunk, hand to a sink with `writeTo`, or save with `saveDownload` from `@elysra/tungsten-runtime/node`. Everything before the answer follows the rules of the buffered method; `opts.maxBytes` bounds the body and `opts.onProgress` reports it. The connection is held until the body ends or `close()` is called.",
+        op.id.0,
+        op.wire_method()
+    )])
+}
+
 /// The TSDoc of the stream property of an operation.
 fn stream_doc(info: &OpInfo<'_>) -> String {
     let op = info.op;
@@ -211,7 +251,7 @@ fn stream_doc(info: &OpInfo<'_>) -> String {
     let mut parts = vec![format!(
         "The events of `{}` (`{}`), as an async iterable of `StreamItem`s: one per server-sent event, then either the end of the stream or one final `{{ ok: false, error }}`. An error before the stream starts is the only item. A dropped stream of a call that is safe to repeat is reconnected with `Last-Event-ID`. The result also has `on`, `collect`, `reduce`, `first` and `cancel`.",
         op.id.0,
-        method_str(op.method)
+        op.wire_method()
     )];
     if let Some(done) = spec.and_then(|s| s.done.as_ref()) {
         parts.push(format!(
@@ -311,6 +351,17 @@ pub(crate) fn resource_file(
                 }
                 namespaces.extend(shapes[o].result_namespaces.iter().cloned());
             }
+            MemberKind::Download(_) => {
+                has_ops = true;
+                for t in [
+                    "Download",
+                    "DownloadOptions",
+                    "OperationDescriptor",
+                    "Result",
+                ] {
+                    imports.add_type("@elysra/tungsten-runtime", t);
+                }
+            }
             MemberKind::Child(c) => {
                 let child = &plan.resources[c];
                 imports.add(&rel_import(&r.file, &child.file), &child.class);
@@ -368,6 +419,16 @@ pub(crate) fn resource_file(
                 }
                 w.line("};");
             }
+            MemberKind::Download(o) => {
+                let info = &plan.ops[o];
+                w.doc(CommentStyle::JsDoc, &download_doc(info));
+                let lines = download_property_type(info, &shapes[o]);
+                w.line(format!("readonly {}: {}", m.name, lines[0]));
+                for l in &lines[1..lines.len() - 1] {
+                    w.line(l);
+                }
+                w.line("};");
+            }
         }
     }
     w.blank();
@@ -389,6 +450,11 @@ pub(crate) fn resource_file(
             MemberKind::Stream(o) => {
                 let event = event_type(&shapes[o]);
                 for l in stream_assignment(&m.name, &plan.ops[o], &shapes[o], &event) {
+                    w.line(l);
+                }
+            }
+            MemberKind::Download(o) => {
+                for l in download_assignment(&m.name, &plan.ops[o], &shapes[o]) {
                     w.line(l);
                 }
             }
@@ -578,7 +644,7 @@ pub(crate) fn index_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> Str
         .filter(|m| Some(&m.name) != star.as_ref())
         .collect();
     let names = unique(
-        &["descriptors", "macros", "custom"],
+        &["descriptors", "macros", "custom", "webhooks"],
         &grouped
             .iter()
             .map(|m| with_word(&tungsten_ir::Ident::new(m.name.as_str()).words, "models"))
@@ -595,6 +661,9 @@ pub(crate) fn index_file(plan: &Plan<'_>, has_macros: bool, header: &str) -> Str
         ));
     }
     w.line("export * as descriptors from \"./descriptors.js\";");
+    if tungsten_emit::webhooks::has_webhooks(plan.ir) {
+        w.line("export * as webhooks from \"./webhooks.js\";");
+    }
     if has_macros {
         w.line("export * as macros from \"./macros.js\";");
     }

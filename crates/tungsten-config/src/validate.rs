@@ -16,21 +16,7 @@ use crate::{
 pub const MANIFEST_VERSION: u32 = 1;
 
 /// Target names accepted under `targets`.
-pub const KNOWN_TARGETS: &[&str] = &[
-    "csharp",
-    "dart",
-    "docs",
-    "fsharp",
-    "java",
-    "kotlin",
-    "mcp",
-    "mock",
-    "python",
-    "ruby",
-    "rust",
-    "typescript",
-    "webmcp",
-];
+pub use crate::capabilities::KNOWN_TARGETS;
 
 /// Option keys of an external target that belong to tungsten; every other
 /// key of the target is passed to the emitter as its options.

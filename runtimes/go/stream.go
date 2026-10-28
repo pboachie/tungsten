@@ -88,6 +88,9 @@ type EventStream struct {
 	cancelled atomic.Bool
 	mu        sync.Mutex
 	body      *eventBody
+	// deadline bounds connecting and each reconnect, never an open
+	// stream; zero means none.
+	deadline time.Time
 }
 
 // setOpen makes o the current connection (nil: none).
@@ -111,7 +114,7 @@ func (c *ClientCore) Stream(op *OperationDescriptor, spec *StreamDescriptor, arg
 	if spec == nil {
 		spec = &StreamDescriptor{}
 	}
-	return &EventStream{core: c, op: op, spec: spec, args: args, opts: opts}
+	return &EventStream{core: c, op: op, spec: spec, args: args, opts: opts, deadline: c.deadlineAt(opts)}
 }
 
 // Event is the event Next delivered.
@@ -166,7 +169,7 @@ func (s *EventStream) Next(ctx context.Context) bool {
 				s.state = 2
 				return false
 			}
-			open, err := s.core.openStream(ctx, s.op, s.spec, s.args, s.opts, nil)
+			open, err := s.core.openStream(withConnectDeadline(ctx, s.deadline), s.op, s.spec, s.args, s.opts, nil)
 			if err != nil {
 				return s.fail(err)
 			}
@@ -242,7 +245,7 @@ func (s *EventStream) Next(ctx context.Context) bool {
 			}
 			return s.fail(s.core.interrupted(s.op, o, why))
 		}
-		fresh, err := s.core.reconnect(ctx, s.op, s.spec, s.args, s.opts, o)
+		fresh, err := s.core.reconnect(withConnectDeadline(ctx, s.deadline), s.op, s.spec, s.args, s.opts, o)
 		if s.cancelled.Load() {
 			if fresh != nil {
 				fresh.body.close()
@@ -458,8 +461,13 @@ func (c *ClientCore) reconnect(ctx context.Context, op *OperationDescriptor, spe
 		ceiling = float64(*old.lastRetry)
 	}
 	ceiling = min(ceiling, float64(c.reconnectMax.Milliseconds()))
-	wait := ceiling - c.random()*0.25*ceiling
-	timer := time.NewTimer(time.Duration(wait * float64(time.Millisecond)))
+	wait := time.Duration((ceiling - c.random()*0.25*ceiling) * float64(time.Millisecond))
+	// A reconnect wait never outlasts the deadline; the reconnect then
+	// fails before it is sent.
+	if at, ok := callDeadline(ctx); ok {
+		wait = max(0, min(wait, time.Until(at)))
+	}
+	timer := time.NewTimer(wait)
 	select {
 	case <-timer.C:
 	case <-ctx.Done():
@@ -581,14 +589,18 @@ func (c *ClientCore) accept(op *OperationDescriptor, spec *StreamDescriptor, o *
 	failure := func(b *diag) *Error {
 		return newError(scrubDiagnostic(b.status(o.meta.Status).requestID(o.meta.RequestID).retry(RetryNever).attempts(o.meta.Attempts).build(), &o.secrets))
 	}
-	value, err := ParseJSONString(ev.data)
+	var value any = ev.data
+	var err error
+	if !spec.Text {
+		value, err = ParseJSONString(ev.data)
+	}
 	if err != nil {
 		return nil, false, failure(newDiag(op.ID, UnexpectedResponse).param(fmt.Sprintf("events[%d]", index)).
 			received(envelopeValue(ev.data, false)).expected("JSON in the data of every event").
 			remedy(fmt.Sprintf("Event %d of the stream (event \"%s\") does not carry JSON in its data.%s Events before it were delivered.", index, ev.event, afterEffect)))
 	}
 	if mode := c.validateResponses; mode != ValidateOff && spec.Event != nil {
-		if issues := judge(spec.Event, value); len(issues) > 0 {
+		if issues := c.judge(op.ID, fmt.Sprintf("events[%d]", index), spec.Event, value, nil); len(issues) > 0 {
 			issue := issues[0]
 			path := segmentStrings(issue.Path)
 			pathText := formatIssuePath(issue.Path)

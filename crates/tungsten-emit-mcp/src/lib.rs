@@ -32,6 +32,7 @@ mod manifest;
 mod names;
 mod options;
 mod package;
+mod python;
 
 use std::collections::BTreeMap;
 
@@ -43,6 +44,7 @@ pub use budget::{INDEX_BUDGET, instructions, listing_tokens, tools_list};
 pub use embeddings::{BIN_FILE as EMBEDDINGS_BIN_FILE, HEADER_FILE as EMBEDDINGS_HEADER_FILE};
 pub use manifest::Mode;
 pub use options::Options;
+pub use python::{McpPythonEmitter, PythonOptions};
 
 /// Emits the `mcp` target.
 #[derive(Debug, Clone, Copy, Default)]
@@ -210,7 +212,7 @@ pub mod __testing {
     }
 
     /// The environment variable names of `ir`'s server: base URL, every
-    /// credential, mode.
+    /// credential, mode, tool-call deadline.
     pub fn env_names(ir: &Ir) -> Vec<String> {
         let mut out = vec![crate::env::base_url(ir)];
         for s in crate::env::schemes(ir) {
@@ -222,6 +224,7 @@ pub mod __testing {
             }
         }
         out.push(crate::env::mode(ir));
+        out.push(crate::env::deadline(ir));
         out
     }
 }

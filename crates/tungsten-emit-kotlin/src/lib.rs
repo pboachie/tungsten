@@ -21,7 +21,10 @@
 //! - `<package>/resources/...`: one class per resource with a request data
 //!   class and a blocking typed function per operation, `preview<Op>`,
 //!   `<op>Pages` (a `Sequence` of page results), `<op>Stream`; one class per
-//!   namespace in multi-namespace APIs;
+//!   namespace in multi-namespace APIs; with the opt-in `coroutines` option
+//!   also `<op>Suspend` (a cancellable `suspend` function) and the cold
+//!   `Flow`s `<op>PagesFlow` / `<op>StreamFlow`, over the separate
+//!   `tungsten-runtime-kotlin-coroutines` artifact;
 //! - `src/main/resources/<package path>/tungsten-descriptors.json`;
 //! - `<package>/custom/`, created once.
 //!
@@ -72,6 +75,8 @@ pub mod __testing {
             runtime: options::DEFAULT_RUNTIME.into(),
             runtime_path: None,
             java_runtime_path: None,
+            coroutines: false,
+            coroutines_runtime_path: None,
         };
         let (plan, _) = SdkPlan::new(ir);
         let names = Namer::new(&plan).names(Target::Kotlin, &namer_options());
@@ -102,6 +107,32 @@ impl Emitter for KotlinEmitter {
     fn emit(&self, ir: &Ir, cfg: &TargetConfig, out: &mut FileSet) -> Diagnostics {
         let (opts, mut diags) = Options::resolve(ir, cfg);
         let (files, more) = generate(ir, &opts);
+        diags.extend(more);
+        for (path, text) in files {
+            if let Err(e) = out.add(path, text) {
+                diags.push(Diagnostic::error("TG0701", format!("kotlin target: {e}")));
+            }
+        }
+        diags
+    }
+
+    fn uses_sdk_plan(&self) -> bool {
+        true
+    }
+
+    fn supports_prepared(&self, ir: &Ir, plan: &SdkPlan<'_>) -> Diagnostics {
+        notes(ir, plan)
+    }
+
+    fn emit_prepared(
+        &self,
+        ir: &Ir,
+        plan: &SdkPlan<'_>,
+        cfg: &TargetConfig,
+        out: &mut FileSet,
+    ) -> Diagnostics {
+        let (opts, mut diags) = Options::resolve(ir, cfg);
+        let (files, more) = generate_prepared(ir, plan, &opts);
         diags.extend(more);
         for (path, text) in files {
             if let Err(e) = out.add(path, text) {
@@ -280,8 +311,16 @@ fn context<'a>(
 /// Every file of the SDK, and the generator's diagnostics.
 pub fn generate(ir: &Ir, opts: &Options) -> (Vec<(String, String)>, Diagnostics) {
     let (plan, _) = SdkPlan::new(ir);
-    let names = Namer::new(&plan).names(Target::Kotlin, &namer_options());
-    let ctx = context(ir, &plan, &names, opts);
+    generate_prepared(ir, &plan, opts)
+}
+
+fn generate_prepared(
+    ir: &Ir,
+    plan: &SdkPlan<'_>,
+    opts: &Options,
+) -> (Vec<(String, String)>, Diagnostics) {
+    let names = Namer::new(plan).names(Target::Kotlin, &namer_options());
+    let ctx = context(ir, plan, &names, opts);
     let mut files: Vec<(String, String)> = vec![];
     files.push(("build.gradle.kts".into(), ctx.build_gradle()));
     files.push(("settings.gradle.kts".into(), ctx.settings_gradle()));
@@ -291,8 +330,8 @@ pub fn generate(ir: &Ir, opts: &Options) -> (Vec<(String, String)>, Diagnostics)
     files.extend(ctx.resources(&infos));
     files.extend(ctx.root(&infos));
     let document = sdk::document_value(
-        &plan,
-        &document_names(&names, &plan),
+        plan,
+        &document_names(&names, plan),
         &DocumentOptions {
             version: opts.version.clone(),
         },

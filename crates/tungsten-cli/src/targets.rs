@@ -17,7 +17,7 @@ use tungsten_emit_docs::DocsEmitter;
 use tungsten_emit_fsharp::FSharpEmitter;
 use tungsten_emit_java::JavaEmitter;
 use tungsten_emit_kotlin::KotlinEmitter;
-use tungsten_emit_mcp::McpEmitter;
+use tungsten_emit_mcp::{McpEmitter, McpPythonEmitter};
 use tungsten_emit_py::PythonEmitter;
 use tungsten_emit_rs::RustEmitter;
 use tungsten_emit_ruby::RubyEmitter;
@@ -28,6 +28,7 @@ use tungsten_ir::Ir;
 static TYPESCRIPT: TypeScriptEmitter = TypeScriptEmitter;
 static DOCS: DocsEmitter = DocsEmitter;
 static MCP: McpEmitter = McpEmitter;
+static MCP_PYTHON: McpPythonEmitter = McpPythonEmitter;
 static WEBMCP: WebMcpEmitter = WebMcpEmitter;
 static PYTHON: PythonEmitter = PythonEmitter;
 static RUST: RustEmitter = RustEmitter;
@@ -44,6 +45,7 @@ pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
         "typescript" => Some(&TYPESCRIPT),
         "docs" => Some(&DOCS),
         "mcp" => Some(&MCP),
+        "mcp-python" => Some(&MCP_PYTHON),
         "webmcp" => Some(&WEBMCP),
         "python" => Some(&PYTHON),
         "rust" => Some(&RUST),
@@ -62,10 +64,7 @@ pub fn emitter(id: &str) -> Option<&'static dyn Emitter> {
 /// operations come from Postman, cURL, `.http` or HAR input; an external
 /// emitter opts in through `import_policy` in its `--describe` response.
 pub(crate) fn serves_import_policy(id: &str) -> bool {
-    matches!(
-        id,
-        "typescript" | "python" | "rust" | "mcp" | "webmcp" | "docs"
-    )
+    tungsten_config::capabilities::target(id).is_some_and(|target| target.imported_operation_policy)
 }
 
 /// The refusal of target `name` for a project with imported-operation
@@ -75,12 +74,126 @@ pub(crate) fn import_policy_refusal(name: &str) -> Diagnostic {
         "TG0705",
         format!("target `{name}` does not declare enforced imported-operation policy support"),
     )
-    .with_help(
-        "select a supported TypeScript, Python, Rust, MCP, WebMCP or docs target, or an \
-         external emitter that declares `import_policy` (`tungsten init --resume --add-targets \
-         <targets>` adds one); imported-policy metadata must not be discarded. `tungsten \
-         explain TG0705` has the details",
-    )
+    .with_help(format!(
+        "select a supported {} target, or an external emitter that declares `import_policy` \
+         (`tungsten init --resume --add-targets <targets>` adds one); imported-policy metadata \
+         must not be discarded. `tungsten explain TG0705` has the details",
+        import_policy_targets()
+    ))
+}
+
+/// The built-in targets declaring imported-operation policy, from the
+/// capability catalog, as `a, b or c`.
+fn import_policy_targets() -> String {
+    let ids: Vec<&str> = tungsten_config::capabilities::TARGETS
+        .iter()
+        .filter(|target| target.imported_operation_policy)
+        .map(|target| target.id)
+        .collect();
+    either(&ids)
+}
+
+/// The refusal of target `name` for IR bound to protocols it does not
+/// declare, one per protocol (TG0706).
+pub(crate) fn protocol_refusals(name: &str, ir: &Ir) -> Vec<Diagnostic> {
+    use tungsten_config::capabilities::{TARGETS, protocols};
+    protocols::unsupported(name, &ir.protocols())
+        .into_iter()
+        .map(|protocol| {
+            let known = protocols::protocol(protocol).is_some();
+            let supporting = protocols::supporting_targets(protocol, TARGETS);
+            let alternative = if supporting.is_empty() {
+                format!("no built-in target generates `{protocol}` in this version")
+            } else {
+                format!("generate it with {}", either(&supporting))
+            };
+            Diagnostic::error(
+                "TG0706",
+                if known {
+                    format!("target `{name}` does not declare the `{protocol}` protocol")
+                } else {
+                    format!("target `{name}`: IR protocol `{protocol}` is not registered")
+                },
+            )
+            .with_help(format!(
+                "{alternative}; `tungsten capabilities --json` lists the protocols each target \
+                 declares. REST fields are never reused for another protocol. \
+                 `tungsten explain TG0706` has the details"
+            ))
+        })
+        .collect()
+}
+
+/// `a, b or c` from a list of names.
+fn either(ids: &[&str]) -> String {
+    match ids.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} or {last}", rest.join(", ")),
+        Some((last, _)) => (*last).to_string(),
+        None => String::new(),
+    }
+}
+
+/// The outputs `init` accepts, from the capability catalog: every built-in
+/// emitter target and the `cli` output, as `a, b or c`.
+pub(crate) fn init_choices() -> String {
+    let init = &tungsten_config::capabilities::INIT;
+    let mut ids: Vec<&str> = tungsten_config::capabilities::TARGETS
+        .iter()
+        .filter(|target| emitter(target.id).is_some())
+        .map(|target| target.id)
+        .collect();
+    ids.push(init.cli_alias);
+    either(&ids)
+}
+
+/// The wizard's output list, from the capability catalog: local-setup
+/// targets first (with the `cli` output after `rust`), then source-only ones.
+pub(crate) fn wizard_output_lines() -> Vec<String> {
+    use tungsten_config::capabilities::{INIT, TARGETS, TargetCapability};
+    let line = |target: &TargetCapability| {
+        let mut notes: Vec<String> = target
+            .prerequisites
+            .iter()
+            .map(|requirement| requirement.tool.to_string())
+            .collect();
+        notes.extend(
+            INIT.companions
+                .iter()
+                .filter(|companion| companion.target == target.id)
+                .map(|companion| format!("adds {}", companion.requires)),
+        );
+        if !INIT.local_setup(target.id) {
+            notes.push("source generation only, no local setup".into());
+        }
+        if !target.imported_operation_policy {
+            notes.push("declared OpenAPI only; refuses imported operations (TG0705)".into());
+        }
+        let mut text = format!("{} - {}", target.id, target.summary);
+        if !notes.is_empty() {
+            text.push_str(&format!(" ({})", notes.join("; ")));
+        }
+        text
+    };
+    let mut lines = Vec::new();
+    let targets = INIT
+        .local_setup_targets
+        .iter()
+        .filter_map(|id| TARGETS.iter().find(|target| target.id == *id))
+        .chain(
+            TARGETS
+                .iter()
+                .filter(|target| !INIT.local_setup(target.id) && emitter(target.id).is_some()),
+        );
+    for target in targets {
+        lines.push(line(target));
+        if target.id == "rust" {
+            lines.push(format!(
+                "{} - command-line client (Rust SDK and CLI; cargo)",
+                INIT.cli_alias
+            ));
+        }
+    }
+    lines
 }
 
 /// A protocol-1 external emitter must explicitly declare policy enforcement
@@ -92,11 +205,12 @@ pub(crate) fn external_import_policy_refusal(name: &str) -> Diagnostic {
             "external target `{name}` does not declare enforced imported-operation policy support"
         ),
     )
-    .with_help(
+    .with_help(format!(
         "use an emitter whose --describe response declares `import_policy: true` and \
-         enforces imported-operation policy, or select a supported TypeScript, Python, \
-         Rust, MCP, WebMCP or docs target; `tungsten explain TG0808` has the details",
-    )
+         enforces imported-operation policy (the Go emitter in `emitters/go` does), or select a supported {} target; `tungsten \
+         explain TG0808` has the details",
+        import_policy_targets()
+    ))
 }
 
 /// The agent tool names target `id` serves (tool name → operation id or
@@ -105,7 +219,7 @@ pub(crate) fn external_import_policy_refusal(name: &str) -> Diagnostic {
 /// docs targets.
 pub fn tool_names(id: &str, ir: &Ir) -> BTreeMap<String, String> {
     match id {
-        "mcp" => tungsten_emit_mcp::tool_names(ir),
+        "mcp" | "mcp-python" => tungsten_emit_mcp::tool_names(ir),
         "webmcp" => tungsten_emit_webmcp::tool_names(ir),
         _ => BTreeMap::new(),
     }
@@ -114,16 +228,7 @@ pub fn tool_names(id: &str, ir: &Ir) -> BTreeMap<String, String> {
 /// The target id for a name given on the command line: the ids themselves
 /// and the short forms `ts`, `py`, `rs`, `cs`, `fs`, `kt` and `rb`.
 pub fn canonical(name: &str) -> &str {
-    match name {
-        "ts" => "typescript",
-        "py" => "python",
-        "rs" => "rust",
-        "cs" => "csharp",
-        "fs" => "fsharp",
-        "kt" => "kotlin",
-        "rb" => "ruby",
-        other => other,
-    }
+    tungsten_config::capabilities::target(name).map_or(name, |target| target.id)
 }
 
 /// The configuration of target `name`: its options from `tungsten.yml`
@@ -160,6 +265,20 @@ pub fn target_config_for(
             .filter_map(|k| Some(((*k).to_string(), ts.get(*k)?.clone())))
             .collect();
         map.insert("typescript_target".into(), serde_json::Value::Object(pick));
+    }
+    if name == "mcp-python" && options.is_null() {
+        options = serde_json::json!({});
+    }
+    if name == "mcp-python"
+        && let Some(map) = options.as_object_mut()
+        && let Some(py) = config.and_then(|c| c.targets.get("python"))
+    {
+        // The Python MCP server depends on the SDK the `python` target generates.
+        let pick: serde_json::Map<String, serde_json::Value> = ["package", "module", "version"]
+            .iter()
+            .filter_map(|k| Some(((*k).to_string(), py.get(*k)?.clone())))
+            .collect();
+        map.insert("python_target".into(), serde_json::Value::Object(pick));
     }
     if name == "mcp"
         && let Some(map) = options.as_object_mut()

@@ -39,6 +39,107 @@ public final class OAuthFlow {
         }
     }
 
+    /** Explicit application-qualified issuer defense; missing iss never chooses a fallback. */
+    public static final class IssuerDefense {
+        private final boolean response;
+        private final String value;
+
+        private IssuerDefense(boolean response, String value) {
+            this.response = response;
+            this.value = value;
+        }
+
+        /** Require the exact decoded provider issuer, including on denial. */
+        public static IssuerDefense issuerResponse(String issuer) {
+            return new IssuerDefense(true, issuer);
+        }
+
+        /** Qualify a redirect that isolates this issuer from other issuers. */
+        public static IssuerDefense distinctRedirect(String qualification) {
+            return new IssuerDefense(false, qualification);
+        }
+
+        boolean response() { return response; }
+        String value() { return value; }
+
+        @Override
+        public String toString() { return "IssuerDefense{..}"; }
+    }
+
+    /**
+     * Managed authorization inputs. Collections are bounded and copied by the managed begin,
+     * after admission; avoid concurrent application mutation while begin captures them.
+     */
+    public record AuthorizationParams(String sessionBinding, boolean s256Supported, IssuerDefense issuerDefense,
+            String redirectUri, List<String> scopes, String resource, String audience, String accountContext,
+            Map<String, String> extra) {
+        /** A builder; owning binding and explicit provider qualifications are required at begin. */
+        public static Builder builder() { return new Builder(); }
+
+        @Override
+        public String toString() { return "AuthorizationParams{..}"; }
+
+        /** Builds managed inputs without cloning unbounded borrowed collections. */
+        public static final class Builder {
+            private String sessionBinding = "";
+            private boolean s256Supported;
+            private IssuerDefense issuerDefense;
+            private String redirectUri;
+            private List<String> scopes;
+            private String resource;
+            private String audience;
+            private String accountContext;
+            private Map<String, String> extra;
+
+            private Builder() {}
+            public Builder sessionBinding(String value) { sessionBinding = value; return this; }
+            public Builder s256Supported(boolean value) { s256Supported = value; return this; }
+            public Builder issuerDefense(IssuerDefense value) { issuerDefense = value; return this; }
+            public Builder redirectUri(String value) { redirectUri = value; return this; }
+            public Builder scopes(List<String> value) { scopes = value; return this; }
+            public Builder resource(String value) { resource = value; return this; }
+            public Builder audience(String value) { audience = value; return this; }
+            public Builder accountContext(String value) { accountContext = value; return this; }
+            public Builder extra(Map<String, String> value) { extra = value; return this; }
+            public AuthorizationParams build() {
+                return new AuthorizationParams(sessionBinding, s256Supported, issuerDefense, redirectUri,
+                        scopes, resource, audience, accountContext, extra);
+            }
+        }
+    }
+
+    /** Handle and URL for the owning listener; neither appears in toString. */
+    public record AuthorizationAttempt(String attemptHandle, String url, long expiresInMs) {
+        @Override
+        public String toString() { return "AuthorizationAttempt{expiresInMs=" + expiresInMs + "}"; }
+    }
+
+    /** Complete one managed attempt with its entire callback and owning listener/session binding. */
+    public record ExchangeParams(String attemptHandle, String callbackUrl, String sessionBinding) {
+        @Override
+        public String toString() { return "ExchangeParams{..}"; }
+    }
+
+    /** Begin a bounded managed S256/state attempt and retain its handle with the owning listener. */
+    public Result<AuthorizationAttempt> authorizationUrl(AuthorizationParams parameters) {
+        return core.authResolver.sessions.begin(scheme, parameters);
+    }
+
+    /** Validate and claim a managed callback once; an ambiguous exchange never reopens its code. */
+    public Result<TokenInfo> exchangeCode(ExchangeParams parameters) {
+        return core.authResolver.sessions.complete(scheme, parameters);
+    }
+
+    /** Invalidate one owned attempt; claimed work retains capacity until physical settlement. */
+    public Result<Void> cancelAuthorization(String attemptHandle, String sessionBinding) {
+        return core.authResolver.sessions.cancel(scheme, attemptHandle, sessionBinding);
+    }
+
+    /** Invalidate local attempts before token removal; no remote revocation is performed. */
+    public Result<Void> logout() {
+        return core.authResolver.sessions.logout(scheme);
+    }
+
     /**
      * What exchangeCode and refresh report: no secrets.
      *
@@ -72,7 +173,7 @@ public final class OAuthFlow {
         return core.diag(operation(helper), Category.AUTH_FAILED).remedy(remediation).fail().toResult();
     }
 
-    /** A fresh pair: pass the challenge to authorizationUrl and keep the verifier for exchangeCode. */
+    /** Low-level PKCE utility. Managed authorizationUrl generates and retains its own pair. */
     public Pkce pkce() {
         String verifier = Text.base64Url(Text.randomBytes(32));
         return new Pkce(verifier, challenge(verifier));
@@ -87,7 +188,7 @@ public final class OAuthFlow {
      * @param codeChallenge the PKCE challenge, or null
      * @param extra further query parameters, added in key order; they never override the others
      */
-    public Result<String> authorizationUrl(String redirectUri, List<String> scopes, String state, String codeChallenge,
+    public Result<String> lowLevelAuthorizationUrl(String redirectUri, List<String> scopes, String state, String codeChallenge,
             Map<String, String> extra) {
         String[] reason = new String[1];
         ApiDescriptor.AuthorizationCode flow = core.authResolver.codeFlow(scheme, reason);
@@ -138,7 +239,7 @@ public final class OAuthFlow {
     }
 
     /** Trades the code from the redirect for tokens, stored for later calls. */
-    public Result<TokenInfo> exchangeCode(String code, String redirectUri, String codeVerifier) {
+    public Result<TokenInfo> lowLevelExchangeCode(String code, String redirectUri, String codeVerifier) {
         String[] reason = new String[1];
         ApiDescriptor.AuthorizationCode flow = core.authResolver.codeFlow(scheme, reason);
         if (flow == null) {
@@ -178,7 +279,7 @@ public final class OAuthFlow {
         if (t.failure() != null) {
             return failed("refresh", t.failure().message());
         }
-        TokenStore.StoredToken stored = core.tokenStore.get(scheme);
+        TokenStore.StoredToken stored = core.authResolver.sessions.readToken(scheme);
         if (stored == null || stored.accessToken() == null || stored.accessToken().isEmpty()) {
             return failed("refresh", "No token is stored for " + scheme + ".");
         }

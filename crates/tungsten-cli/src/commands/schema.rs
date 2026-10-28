@@ -41,7 +41,11 @@ fn schema_for(name: SchemaName) -> Value {
         SchemaName::Ir => Ir::json_schema(),
         SchemaName::CliOutput => cli_output_schema(),
         SchemaName::ExternalEmitter => tungsten_emit::external::json_schema(),
+        SchemaName::ExecutionPolicy => tungsten_core::policy::json_schema(),
         SchemaName::SdkDescriptors => tungsten_emit::sdk::descriptors::json_schema(),
         SchemaName::ToolCatalog => tungsten_emit::tool_catalog::schema(),
+        SchemaName::Capabilities => tungsten_config::capabilities::json_schema(),
+        SchemaName::GenerationLock => crate::commands::lock::json_schema(),
+        SchemaName::ProjectBundle => crate::commands::bundle::json_schema(),
     }
 }

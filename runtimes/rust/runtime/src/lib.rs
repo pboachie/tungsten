@@ -58,11 +58,13 @@
 mod auth;
 pub mod b64;
 pub mod blocking;
+mod checkpoint;
 mod classify;
 mod client;
 mod confirm;
 pub mod crypto;
 mod dispatch;
+mod download;
 mod envelope;
 mod expr;
 mod helpers;
@@ -71,38 +73,62 @@ mod integral;
 mod lease;
 mod macros;
 mod oauth;
+mod oauth_attempt;
 mod pages;
 mod prepare;
 mod preview;
+mod scheduler;
 mod send;
 mod serialize;
 mod sse;
 mod stream;
+mod telemetry;
 mod transport;
+mod unchecked;
+mod upload;
 mod util;
 mod validate;
 mod value;
 mod verify;
+pub mod webhooks;
 
 pub mod types;
 
+pub use checkpoint::{
+    CHECKPOINT_PREFIX, CheckpointOptions, CheckpointPage, CheckpointState, CheckpointStatus,
+    ExportPages, MAX_CHECKPOINT_CHARS, TypedExportPages, describe_checkpoint,
+};
 pub use client::{ClientCore, ConfigError, Pages, Polled, TypedPages};
 pub use dispatch::{
     ByStatus, Dispatch, Mismatch, StatusDecode, decode, decode_by_status, decode_event,
     decode_page, decode_variant, no_stream,
 };
+pub use download::{Download, DownloadOptions, TransferProgress, disposition_filename};
 pub use idempotency::{FileIdempotencyStore, MemoryIdempotencyStore};
 pub use oauth::{
-    AuthorizationUrlParams, ExchangeCodeParams, MemoryTokenStore, OAuthFlow, Pkce, StoredToken,
-    TokenInfo, TokenStore, generate_pkce, pkce_challenge,
+    LowLevelAuthorizationUrlParams, LowLevelExchangeCodeParams, MemoryTokenStore, OAuthFlow, Pkce,
+    StoredToken, TokenInfo, TokenStore, generate_pkce, pkce_challenge,
+};
+pub use oauth_attempt::{
+    AuthorizationAttempt, AuthorizationUrlParams, ExchangeCodeParams, IssuerDefense,
 };
 pub use pages::MAX_PAGES_REACHED;
+pub use scheduler::{
+    Rejection, RequestScheduler, SchedulerEvent, SchedulerObserver, SchedulerOptions,
+    SchedulerScope, SchedulerStats,
+};
 pub use stream::{
     DEFAULT_MAX_COLLECT_BYTES, DEFAULT_MAX_COLLECT_TIME, DEFAULT_MAX_RECONNECTS,
     DEFAULT_RECONNECT_MAX, EventHandlers, EventStream, Folded, StreamEvent, StreamResult,
     TypedEvents,
 };
+pub use telemetry::{
+    MemoryTelemetryCollector, TELEMETRY_SCHEMA_VERSION, TelemetryEntry, TelemetryEvent,
+    TelemetryEventName, TelemetryObserver, TelemetryOutcome, TelemetryPhase, TelemetryQueueReason,
+};
 pub use types::*;
+pub use unchecked::{PatternNote, note_unchecked_pattern};
+pub use upload::{UploadReader, UploadReplay, UploadSource};
 pub use value::{BINARY_KEY, Binary, Patch};
 
 /// Version of this runtime, sent as `X-Tungsten-Runtime: tungsten-rs/<version>`.
@@ -128,5 +154,6 @@ pub mod internals {
     };
     pub use crate::sse::{DEFAULT_MAX_EVENT_BYTES, SseEvent, SseParser, Utf8Decoder};
     pub use crate::transport::{next_link, parse_http_date, parse_retry_after};
+    pub use crate::unchecked::collect as collect_pattern_notes;
     pub use crate::util::{canonical_json, envelope_value, js_number, json_text, sha256_hex};
 }

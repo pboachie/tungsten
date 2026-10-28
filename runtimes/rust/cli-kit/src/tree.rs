@@ -57,6 +57,20 @@ fn first_line(s: &str) -> &str {
         .unwrap_or("")
 }
 
+fn account_arg() -> Arg {
+    Arg::new("account")
+        .long("account")
+        .value_name("NAME")
+        .help("The account of the login session (default: the selected one)")
+}
+
+fn scheme_arg() -> Arg {
+    Arg::new("scheme")
+        .long("scheme")
+        .value_name("SCHEME")
+        .help("The OAuth2 scheme (when the API has several)")
+}
+
 fn global(name: &'static str, value: Option<&'static str>, help: &'static str) -> Arg {
     let a = Arg::new(name).long(name).global(true).help(help);
     match value {
@@ -207,6 +221,19 @@ fn leaf_command(
                 .value_parser(clap::value_parser!(u32).range(1..))
                 .help("With --all, stop after N pages and say so when more remain (default: no limit)"),
         );
+        if safety == Safety::ReadOnly {
+            cmd = cmd.arg(
+                Arg::new("checkpoint-file")
+                    .long("checkpoint-file")
+                    .value_name("PATH")
+                    .action(ArgAction::Set)
+                    .requires("all")
+                    .help(format!(
+                        "With --all, save progress to PATH after each page is printed and resume from it when it exists (needs {}_CHECKPOINT_KEY; delete PATH to start over)",
+                        env.prefix
+                    )),
+            );
+        }
     }
     if safety != Safety::ReadOnly {
         cmd = cmd
@@ -339,9 +366,31 @@ pub(crate) fn build(spec: &CliSpec, relaxed: &BTreeSet<String>) -> Tree {
         .arg(global("config", Some("PATH"), "Path of the config file"))
         .arg(
             global(
+                "max-response-bytes",
+                Some("BYTES"),
+                "Finite ordinary response byte cap (default 4 MiB)",
+            )
+            .value_parser(clap::value_parser!(u64).range(1..=9_007_199_254_740_991)),
+        )
+        .arg(
+            global(
                 "timeout",
                 Some("SECONDS"),
                 "Timeout of each request attempt",
+            )
+            .value_parser(ValueParser::new(|s: &str| {
+                s.parse::<f64>()
+                    .ok()
+                    .filter(|v| v.is_finite() && *v > 0.0)
+                    .map(|_| s.to_string())
+                    .ok_or_else(|| format!("`{s}` is not a positive number of seconds"))
+            })),
+        )
+        .arg(
+            global(
+                "deadline",
+                Some("SECONDS"),
+                "Total deadline of the command across retries and verification",
             )
             .value_parser(ValueParser::new(|s: &str| {
                 s.parse::<f64>()
@@ -399,7 +448,57 @@ pub(crate) fn build(spec: &CliSpec, relaxed: &BTreeSet<String>) -> Tree {
                 .arg_required_else_help(true)
                 .subcommand(
                     Command::new("status")
-                        .about("Show which credentials are present, never their values"),
+                        .about("Show which credentials and login sessions are present, never their values")
+                        .arg(account_arg()),
+                )
+                .subcommand(
+                    Command::new("login")
+                        .about("Sign in through the browser and store the session (interactive only)")
+                        .arg(account_arg())
+                        .arg(scheme_arg())
+                        .arg(
+                            Arg::new("store")
+                                .long("store")
+                                .value_name("STORE")
+                                .value_parser(["keychain", "file", "ephemeral"])
+                                .help("Where to keep the tokens: the OS keychain (default) or, explicitly, an owner-only file"),
+                        )
+                        .arg(
+                            Arg::new("scope")
+                                .long("scope")
+                                .value_name("SCOPE")
+                                .action(ArgAction::Append)
+                                .help("A scope to request (repeatable; default: the scheme's scopes)"),
+                        )
+                        .arg(
+                            Arg::new("no-browser")
+                                .long("no-browser")
+                                .action(ArgAction::SetTrue)
+                                .help("Print the sign-in URL without opening a browser"),
+                        ),
+                )
+                .subcommand(
+                    Command::new("switch")
+                        .about("Use another stored account for this profile")
+                        .arg(
+                            Arg::new("account-name")
+                                .value_name("ACCOUNT")
+                                .required(true)
+                                .help("The account to use"),
+                        )
+                        .arg(scheme_arg()),
+                )
+                .subcommand(
+                    Command::new("logout")
+                        .about("Remove the stored session of the selected account")
+                        .arg(account_arg())
+                        .arg(scheme_arg())
+                        .arg(
+                            Arg::new("all")
+                                .long("all")
+                                .action(ArgAction::SetTrue)
+                                .help("Remove every stored session of this CLI"),
+                        ),
                 ),
         );
     Tree { command, leaves }

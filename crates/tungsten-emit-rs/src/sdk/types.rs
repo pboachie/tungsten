@@ -1188,9 +1188,20 @@ fn write_tagged_impls(w: &mut Writer, cx: &Cx<'_, '_>, name: &str, u: &Union, na
     w.indent();
     w.line("fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {");
     w.indent();
-    w.line(format!(
-        "let (tag, value) = s::read_tagged(deserializer, {property})?;"
-    ));
+    let fallback = d.default_mapping.as_ref().and_then(|id| {
+        u.variants
+            .iter()
+            .zip(names)
+            .find(|(v, _)| matches!(&v.ty, TypeRef::Named(t) if t == id))
+    });
+    let read = match fallback {
+        Some((v, _)) => format!(
+            "let (tag, value) = s::read_tagged_or(deserializer, {property}, {})?;",
+            string_lit(v.tag.as_deref().unwrap_or_default())
+        ),
+        None => format!("let (tag, value) = s::read_tagged(deserializer, {property})?;"),
+    };
+    w.line(read);
     w.line("match tag.as_str() {");
     w.indent();
     for (v, variant) in u.variants.iter().zip(names) {
@@ -1222,6 +1233,26 @@ fn write_tagged_impls(w: &mut Writer, cx: &Cx<'_, '_>, name: &str, u: &Union, na
             ],
         );
         arm(w, 12, &pattern, &body);
+    }
+    if let Some((v, variant)) = fallback {
+        // Any other value selects the default variant.
+        let body = Rx::call(
+            "s::variant_into",
+            vec![
+                Rx::atom("value"),
+                Rx::atom(property.clone()),
+                Rx::atom(tag_field(cx, &v.ty, &d.property).to_string()),
+                Rx::atom(format!("{name}::{variant}")),
+            ],
+        );
+        arm(w, 12, "_", &body);
+        w.dedent();
+        w.line("}");
+        w.dedent();
+        w.line("}");
+        w.dedent();
+        w.line("}");
+        return;
     }
     let expected = u
         .variants
@@ -1426,9 +1457,12 @@ pub(crate) fn write_patterns(w: &mut Writer, patterns: &[String]) {
         w.dedent();
         w.line("}");
         w.blank();
+        w.line(format!("static RE_{n}: LazyLock<Result<Regex, String>> ="));
+        w.indent();
         w.line(format!(
-            "static RE_{n}: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(re_{n}()).ok());"
+            "LazyLock::new(|| Regex::new(re_{n}()).map_err(|e| crate::support::regex_reason(&e)));"
         ));
+        w.dedent();
     }
 }
 

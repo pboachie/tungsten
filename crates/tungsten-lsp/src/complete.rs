@@ -21,6 +21,7 @@ pub struct Inputs<'a> {
     pub index: Option<&'a Index>,
     pub manifest: &'a Schema,
     pub agent: &'a Schema,
+    pub profile: &'a Schema,
 }
 
 impl Inputs<'_> {
@@ -28,6 +29,7 @@ impl Inputs<'_> {
         match self.kind {
             Kind::Manifest => Some(self.manifest),
             Kind::Agent => Some(self.agent),
+            Kind::Profile => Some(self.profile),
             Kind::Overlay => None,
         }
     }
@@ -203,63 +205,30 @@ fn dynamic_keys(
     out
 }
 
+/// Option keys of a target, from the shared capability catalog; `out` for
+/// external or unknown targets.
 fn target_keys(target: &str) -> &'static [&'static str] {
-    match target {
-        "typescript" => &["package", "runtime", "out"],
-        "python" => &["package", "runtime", "models", "out"],
-        "rust" => &["crate", "runtime", "cli", "out"],
-        "java" => &[
-            "group_id",
-            "artifact_id",
-            "package",
-            "version",
-            "runtime",
-            "runtime_path",
-            "out",
-        ],
-        "csharp" => &[
-            "package_id",
-            "namespace",
-            "version",
-            "runtime",
-            "runtime_path",
-            "out",
-        ],
-        "fsharp" => &[
-            "package_id",
-            "namespace",
-            "version",
-            "runtime",
-            "runtime_path",
-            "csharp_runtime_path",
-            "out",
-        ],
-        "kotlin" => &[
-            "group",
-            "artifact",
-            "package",
-            "version",
-            "runtime",
-            "runtime_path",
-            "java_runtime_path",
-            "out",
-        ],
-        "ruby" => &["gem", "module", "version", "runtime", "runtime_path", "out"],
-        "dart" => &["package", "version", "runtime", "runtime_path", "out"],
-        "mcp" => &["package", "runtime", "out"],
-        "webmcp" => &[
-            "package",
-            "version",
-            "runtime",
-            "runtime_path",
-            "sdk",
-            "sdk_path",
-            "sdk_runtime",
-            "sdk_runtime_path",
-            "out",
-        ],
-        _ => &["out"],
-    }
+    tungsten_config::capabilities::target(target).map_or(&["out"], |target| target.option_keys)
+}
+
+/// Enumerated values of a target option, from the option schema the
+/// capability catalog declares for the target, each marked when it is the default.
+fn target_option_values(target: &str, key: &str) -> Vec<(String, bool)> {
+    let Some(schema) =
+        tungsten_config::capabilities::target(target).and_then(|target| target.options_schema)
+    else {
+        return vec![];
+    };
+    let schema = schema.json_schema();
+    let property = &schema["properties"][key];
+    let default = property.get("default");
+    property
+        .get("enum")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|value| Some((value.as_str()?.to_string(), Some(value) == default)))
+        .collect()
 }
 
 fn overlay_keys(path: &[Seg]) -> &'static [&'static str] {
@@ -342,6 +311,22 @@ fn values(inputs: &Inputs<'_>, cx: &Context) -> Vec<CompletionItem> {
                 CompletionItemKind::ENUM_MEMBER,
                 "cluster",
             );
+        }
+        (Kind::Manifest, s) if s.starts_with("targets.") && cx.path.len() == 3 => {
+            if let (Some(Seg::Key(target)), Some(Seg::Key(key))) = (cx.path.get(1), cx.path.get(2))
+            {
+                for (value, default) in target_option_values(target, key) {
+                    let mut it = item(
+                        inputs,
+                        cx,
+                        &value,
+                        CompletionItemKind::ENUM_MEMBER,
+                        value.clone(),
+                    );
+                    it.detail = default.then(|| "default".to_string());
+                    out.push(it);
+                }
+            }
         }
         (Kind::Manifest, "auth_profiles.*.satisfies[]") => {
             names(
