@@ -131,18 +131,19 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 
 | Target | Aliases | Emits | Consumer toolchain | Runs on | Features | Imported-operation policy | Qualification | Artifacts |
 |---|---|---|---|---|---|---|---|---|
-| `csharp` | `cs` | C# SDK | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
-| `dart` |  | Dart SDK (sealed unions, Future methods returning Result, Stream pages) | dart >=3.6 <4.0 | dart_io | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
+| `csharp` | `cs` | C# SDK | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers`, `multipart_part_encoding` | enforced | unknown | unknown |
+| `dart` |  | Dart SDK (sealed unions, Future methods returning Result, Stream pages) | dart >=3.6 <4.0 | dart_io | `typed_sdk`, `pagination_helpers`, `multipart_part_encoding` | enforced | unknown | unknown |
 | `docs` |  | llms.txt, llms-full.txt, tools.json and README | none | static | `llms_txt` | enforced | unknown | unknown |
-| `fsharp` | `fs` | F# SDK (records, discriminated unions, Task of Result) | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
-| `java` |  | Java SDK | java >=17.0; mvn installed | jvm | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
-| `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `coroutines` | enforced | unknown | unknown |
+| `fsharp` | `fs` | F# SDK (records, discriminated unions, Task of Result) | dotnet >=10.0 | dotnet | `typed_sdk`, `pagination_helpers`, `multipart_part_encoding` | enforced | unknown | unknown |
+| `java` |  | Java SDK | java >=17.0; mvn installed | jvm | `typed_sdk`, `pagination_helpers`, `multipart_part_encoding` | enforced | unknown | unknown |
+| `kotlin` | `kt` | Kotlin/JVM SDK (blocking functions returning Result; opt-in coroutines) | java >=17.0; gradle installed | jvm | `typed_sdk`, `pagination_helpers`, `coroutines`, `multipart_part_encoding` | enforced | unknown | unknown |
 | `mcp` |  | MCP server over stdio or Streamable HTTP, discrete or progressive | node >=22.13 excluding 23.0.x, 23.1.x; npm installed | node | `mcp_stdio`, `mcp_streamable_http`, `mcp_embedding_search`, `mcp_script_sandbox` | enforced | unknown | unknown |
+| `mcp-python` |  | Experimental: native Python MCP server over stdio or Streamable HTTP, discrete or progressive, on the Python SDK | python3 >=3.12 | cpython | `mcp_stdio`, `mcp_streamable_http`, `webmcp_python_dispatch` | enforced | unknown | unknown |
 | `mock` |  | reserved; no emitter in this version | none |  |  | n/a | unknown | unknown |
-| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `pagination_checkpoints`, `dataclass_models`, `webhook_verification`, `typed_webhooks`, `streaming_downloads`, `telemetry_hooks` | enforced | unknown | unknown |
-| `ruby` | `rb` | Ruby SDK | ruby >=3.3; bundle installed | ruby | `typed_sdk`, `pagination_helpers` | enforced | unknown | unknown |
-| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `pagination_checkpoints`, `generated_cli`, `webhook_verification`, `typed_webhooks`, `cli_login_sessions`, `streaming_downloads`, `telemetry_hooks` | enforced | unknown | unknown |
-| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers`, `pagination_checkpoints`, `webhook_verification`, `typed_webhooks`, `streaming_downloads`, `telemetry_hooks` | enforced | unknown | unknown |
+| `python` | `py` | Sync and async Python SDK, Pydantic v2 or dataclass models | python3 >=3.12 (`python_version` selects the minimum) | cpython | `typed_sdk`, `pagination_helpers`, `pagination_checkpoints`, `dataclass_models`, `webhook_verification`, `typed_webhooks`, `streaming_downloads`, `streaming_uploads`, `telemetry_hooks`, `multipart_part_encoding`, `multipart_part_headers` | enforced | unknown | unknown |
+| `ruby` | `rb` | Ruby SDK | ruby >=3.3; bundle installed | ruby | `typed_sdk`, `pagination_helpers`, `multipart_part_encoding` | enforced | unknown | unknown |
+| `rust` | `rs` | Async Rust SDK (serde, reqwest) and optional generated CLI | cargo >=1.88; rustc >=1.88 | native | `typed_sdk`, `pagination_helpers`, `pagination_checkpoints`, `generated_cli`, `webhook_verification`, `typed_webhooks`, `cli_login_sessions`, `streaming_downloads`, `streaming_uploads`, `telemetry_hooks`, `multipart_part_encoding`, `multipart_part_headers` | enforced | unknown | unknown |
+| `typescript` | `ts` | Typed TypeScript SDK, Result values, Zod validation | node >=22.0; npm installed | node | `typed_sdk`, `pagination_helpers`, `pagination_checkpoints`, `webhook_verification`, `typed_webhooks`, `streaming_downloads`, `streaming_uploads`, `telemetry_hooks`, `multipart_part_encoding`, `multipart_part_headers` | enforced | unknown | unknown |
 | `webmcp` |  | Browser ESM package with tool manifest and registration helper | node >=22.0; npm installed | browser | `webmcp_registration` | enforced | unknown | unknown |
 
 | Feature | Domain | Opt-in option | Description |
@@ -159,8 +160,12 @@ The support matrix below is generated from the capability catalog (`tungsten cap
 | `mcp_embedding_search` | target | `search` | optional embedding index for tool search |
 | `mcp_script_sandbox` | runtime | `sandbox` | opt-in run_script sandbox |
 | `webmcp_registration` | protocol |  | browser tool manifest and WebMCP registration helper |
+| `webmcp_python_dispatch` | protocol | `webmcp` | experimental Python dispatch app backing browser WebMCP tools registered with registerRemoteWebMcp |
 | `telemetry_hooks` | runtime |  | opt-in local telemetry observer with bounded, redacted operation, attempt and phase events |
+| `streaming_uploads` | runtime |  | streamed request bodies that are one-shot or recreatable, with declared length and SHA-256 checks |
 | `streaming_downloads` | runtime |  | explicit streamed response bodies with byte limits, progress, idle timeout and deadline |
+| `multipart_part_encoding` | runtime |  | multipart/form-data request fields sent with the media type their OpenAPI `encoding` entry declares (`contentType`) |
+| `multipart_part_headers` | runtime |  | multipart/form-data parts carry the headers of their OpenAPI `encoding` entry whose schema fixes one value (`const` or a one-value `enum`); other declared headers are not sent |
 | `webhook_verification` | runtime |  | framework-free incoming webhook verification: Stripe-compatible `t=,v1=` HMAC-SHA256 signatures compared in constant time, secret rotation, bounded body, timestamp tolerance and an application-owned replay hook |
 | `typed_webhooks` | target |  | typed payloads of OpenAPI `webhooks` and a parse helper that verifies a delivery and validates its payload before the replay claim |
 | `llms_txt` | target |  | llms.txt, llms-full.txt and tools.json documentation |
