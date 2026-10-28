@@ -9,6 +9,28 @@ changes.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-28
+
+### Security
+
+- Fix the npm adapter runtime peer dependencies: the MCP and WebMCP adapters
+  now require `@elysra/tungsten-runtime` `^0.1.5`, matching the release
+  version so the npm publisher's strict identity check passes (0.1.4 shipped
+  the adapters with the previous `^0.1.3` range and could not be published to
+  npm from its immutable tag).
+- Raise the `tungsten init` Python `pydantic` floor to `>=2.10.1,<3`,
+  matching the reviewed main-line floor.
+- Refresh the distribution container base image digest (Alpine 3.24,
+  `be265606`), matching the reviewed main-line bump.
+
+### Changed
+
+- Coordinated 0.1.5 version bump across the compiler, every runtime
+  manifest and identity header, generated-package runtime defaults and the
+  Go module default, carried from the qualified 0.1.4 release line.
+
+
+
 ## [0.1.4] - 2026-10-26
 
 Security-only patch release on top of 0.1.3. It contains no feature or
@@ -811,7 +833,8 @@ runtime (`@elysra/tungsten-mcp`) and the installers ship together at 0.1.0.
 - The compiler warns when a `gates` entry in `agent.yml` matches no
   operation.
 
-[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/pboachie/tungsten/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/pboachie/tungsten/compare/v0.1.4...HEAD
 [0.1.4]: https://github.com/pboachie/tungsten/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/pboachie/tungsten/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/pboachie/tungsten/compare/v0.1.1...v0.1.2

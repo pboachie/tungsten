@@ -8,7 +8,7 @@ open Tungsten.Runtime
 
 /// The version of this layer, sent as `X-Tungsten-Runtime: tungsten-fs/<version>`.
 [<Literal>]
-let Version = "0.1.4"
+let Version = "0.1.5"
 
 /// The `(language)` token of `User-Agent`.
 [<Literal>]

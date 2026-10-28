@@ -17,7 +17,7 @@ use tungsten_ir::Ir;
 use tungsten_ir::naming::{self, Case};
 
 /// Default requirement on the `tungsten-runtime` gem.
-pub const DEFAULT_RUNTIME_REQUIREMENT: &str = "~> 0.1.4";
+pub const DEFAULT_RUNTIME_REQUIREMENT: &str = "~> 0.1.5";
 
 /// Constants a generated module must not be named: the runtime's root and
 /// the core classes generated code relies on.
