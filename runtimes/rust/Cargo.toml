@@ -3,7 +3,7 @@ resolver = "3"
 members = ["runtime", "cli-kit"]
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -16,7 +16,7 @@ categories = ["development-tools", "web-programming::http-client"]
 publish = ["crates-io"]
 
 [workspace.dependencies]
-tungsten-runtime = { path = "runtime", version = "0.1.4" }
+tungsten-runtime = { path = "runtime", version = "0.1.5" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

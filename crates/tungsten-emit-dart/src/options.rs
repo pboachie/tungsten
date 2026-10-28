@@ -16,7 +16,7 @@ use tungsten_ir::Ir;
 use tungsten_ir::naming::{self, Case};
 
 /// Default constraint on the `tungsten_runtime` package.
-pub const DEFAULT_RUNTIME_CONSTRAINT: &str = "^0.1.4";
+pub const DEFAULT_RUNTIME_CONSTRAINT: &str = "^0.1.5";
 
 /// The pub name of the runtime package.
 pub const RUNTIME_PACKAGE: &str = "tungsten_runtime";

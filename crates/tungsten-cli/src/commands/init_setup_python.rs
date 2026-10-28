@@ -67,7 +67,7 @@ pub(super) fn build(directory: &Path, runtime: Option<&Path>) -> Result<(), Stri
             "hatchling>=1.25",
             "httpx>=0.27,<1",
             "certifi>=2026.10.19",
-            "pydantic>=2.10,<3",
+            "pydantic>=2.10.1,<3",
         ],
         directory,
         Duration::from_secs(180),

@@ -14,7 +14,7 @@ import (
 )
 
 // Version of this runtime, sent as X-Tungsten-Runtime: tungsten-go/<version>.
-const Version = "0.1.4"
+const Version = "0.1.5"
 
 // ClientCore is the engine behind every generated client: pre-flight
 // validation, auth, idempotency keys, confirmation rules, sending with
