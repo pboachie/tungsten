@@ -16,8 +16,7 @@ use tungsten_ir::Ir;
 use tungsten_ir::naming::{self, Case};
 
 /// Default constraint on the `tungsten_runtime` package.
-pub const DEFAULT_RUNTIME_CONSTRAINT: &str =
-    tungsten_config::option_fields::DART_RUNTIME_CONSTRAINT;
+pub const DEFAULT_RUNTIME_CONSTRAINT: &str = "^0.1.5";
 
 /// The pub name of the runtime package.
 pub const RUNTIME_PACKAGE: &str = "tungsten_runtime";
@@ -135,7 +134,7 @@ impl Options {
         )
         .unwrap_or_else(|| default_package(&ir.api.name.words));
         let version = read("version", &is_version, "a semantic version such as 1.2.3")
-            .unwrap_or_else(|| tungsten_config::option_fields::PACKAGE_VERSION.to_string());
+            .unwrap_or_else(|| "0.1.0".to_string());
         let runtime = read(
             "runtime",
             &is_constraint,
