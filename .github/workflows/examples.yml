@@ -105,9 +105,14 @@ jobs:
           persist-credentials: false
       # The macos-15 image ships a GitHub CLI older than the 2.102.0 that
       # provenance verification needs; the action refuses it and says so.
+      # `brew upgrade gh` alone no-ops when the local formula index already
+      # lists the installed 2.100.0 as newest, so update the index first.
       - name: Update the GitHub CLI (macOS)
         if: runner.os == 'macOS'
-        run: brew upgrade gh || brew install gh
+        run: |
+          brew update >/dev/null
+          brew upgrade gh || brew install gh
+          gh --version
       - name: Install only
         id: install
         uses: ./actions/tungsten

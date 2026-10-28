@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tungsten-mcp"
-version = "0.1.3"
+version = "0.1.4"
 readme = "README.md"
 description = "Experimental native Python MCP server runtime for tungsten-generated APIs: stdio, discrete tools, previews and confirmation, envelope results."
 license = "Apache-2.0"
