@@ -37,7 +37,7 @@ use crate::env::{self, Credentials};
 use crate::manifest::{self, McpManifest, ToolKind};
 
 /// Default version specifier of the `tungsten-mcp` runtime.
-pub const DEFAULT_RUNTIME: &str = ">=0.1.3,<0.2.0";
+pub const DEFAULT_RUNTIME: &str = ">=0.1.4,<0.2.0";
 
 /// Emits the experimental `mcp-python` target.
 #[derive(Debug, Clone, Copy, Default)]

@@ -13,10 +13,10 @@ plugins {
 }
 
 group = "io.github.pboachie.tungsten"
-version = "0.1.3"
+version = "0.1.4"
 
 dependencies {
-    api("io.github.pboachie.tungsten:tungsten-runtime:0.1.3")
+    api("io.github.pboachie.tungsten:tungsten-runtime:0.1.4")
 }
 
 java {

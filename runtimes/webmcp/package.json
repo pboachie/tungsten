@@ -1,6 +1,6 @@
 {
   "name": "@elysra/tungsten-webmcp",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Browser WebMCP adapter for tungsten-generated APIs.",
   "license": "Apache-2.0",
   "keywords": ["openapi", "sdk", "tungsten", "agents", "runtime", "webmcp"],
