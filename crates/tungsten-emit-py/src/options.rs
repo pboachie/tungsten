@@ -131,7 +131,7 @@ impl Options {
             None => RuntimeDep::Spec(match runtime_spec {
                 Some(spec) if python_version != "3.12" => format!("{spec},>=0.1.3"),
                 Some(spec) => spec,
-                None if python_version != "3.12" => ">=0.1.3,<0.2.0".to_string(),
+                None if python_version != "3.12" => ">=0.1.4,<0.2.0".to_string(),
                 None => DEFAULT_RUNTIME_SPEC.to_string(),
             }),
         };

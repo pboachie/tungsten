@@ -213,7 +213,7 @@ from .types import (
 
 #: Version of ``tungsten-runtime``, sent in ``X-Tungsten-Runtime``; kept
 #: equal to ``pyproject.toml`` ``version``.
-RUNTIME_VERSION: Final = "0.1.3"
+RUNTIME_VERSION: Final = "0.1.4"
 
 Purpose = Literal["call", "preview", "server_preview", "macro_preview"]
 
