@@ -3,7 +3,7 @@ resolver = "3"
 members = ["runtime", "cli-kit"]
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.6"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -16,12 +16,12 @@ categories = ["development-tools", "web-programming::http-client"]
 publish = ["crates-io"]
 
 [workspace.dependencies]
-tungsten-runtime = { path = "runtime", version = "0.1.4" }
+tungsten-runtime = { path = "runtime", version = "0.1.6" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 serde_path_to_error = "0.1"
-tokio = { version = "1", default-features = false, features = ["rt", "time", "sync", "macros"] }
+tokio = { version = "1", default-features = false, features = ["rt", "time", "sync", "macros", "net", "io-util"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "multipart"] }
 hmac = "0.13"
 sha2 = "0.11"
