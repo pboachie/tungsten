@@ -155,7 +155,14 @@ fn cache_error() -> Diagnostic {
 }
 
 pub(crate) fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    // sha2 0.11 (digest 0.11 / hybrid-array) no longer implements LowerHex for
+    // digest outputs; encode the bytes explicitly instead.
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(64);
+    for byte in Sha256::digest(bytes) {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }
 
 /// Lowercase hex SHA256 of `bytes`, the form recorded as `source_sha256`.
