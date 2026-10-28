@@ -36,6 +36,7 @@ for (const pkg of ["ts", "mcp", "webmcp"]) {
   expect(`${pkg} lock package`, lock.packages[""].version);
 }
 expect("Python manifest", tomlVersion("runtimes/python/pyproject.toml", "project"));
+expect("Python MCP manifest", tomlVersion("runtimes/mcp-python/pyproject.toml", "project"));
 expect("Rust runtime manifest", tomlVersion("runtimes/rust/Cargo.toml", "workspace.package"));
 expect("Java manifest", capture("runtimes/java/pom.xml", /<version>([^<]+)<\/version>/));
 expect("C# manifest", capture("runtimes/csharp/Tungsten.Runtime.csproj", /<Version>([^<]+)<\/Version>/));
