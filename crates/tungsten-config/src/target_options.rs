@@ -12,7 +12,7 @@ use tungsten_core::{Diagnostic, Diagnostics};
 
 /// Defaults shared by the declaration contract and the TypeScript emitter.
 pub const TYPESCRIPT_PACKAGE_VERSION: &str = "0.1.0";
-pub const TYPESCRIPT_RUNTIME_RANGE: &str = "^0.1.4";
+pub const TYPESCRIPT_RUNTIME_RANGE: &str = "^0.1.6";
 
 /// Valid user declarations; no package/version/runtime defaults are applied here.
 /// Use [`Self::parse`] to retain TG0711 diagnostics for explicit null or invalid
@@ -319,11 +319,11 @@ fn is_semver(s: &str) -> bool {
 
 /// Defaults shared by the Python declaration contract and emitter.
 pub const PYTHON_PACKAGE_VERSION: &str = "0.1.0";
-pub const PYTHON_RUNTIME_SPEC: &str = ">=0.1.4,<0.2.0";
+pub const PYTHON_RUNTIME_SPEC: &str = ">=0.1.6,<0.2.0";
 pub const PYTHON_VERSION: &str = "3.12";
 /// Defaults shared by the Rust declaration contract and emitter.
 pub const RUST_PACKAGE_VERSION: &str = "0.1.0";
-pub const RUST_RUNTIME_REQ: &str = "0.1.4";
+pub const RUST_RUNTIME_REQ: &str = "0.1.6";
 
 /// One scalar string option: its key, validator and expected-value phrase.
 struct Scalar {

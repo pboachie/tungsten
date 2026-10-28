@@ -12,7 +12,7 @@ import java.util.Objects;
  */
 public final class RuntimeIdentity {
     /** The version of this runtime. */
-    public static final String VERSION = "0.1.4";
+    public static final String VERSION = "0.1.6";
 
     /** The Java runtime's identity. */
     public static final RuntimeIdentity JAVA =

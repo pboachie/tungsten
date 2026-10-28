@@ -12,7 +12,7 @@ import io.github.pboachie.tungsten.runtime.RuntimeIdentity
  */
 public object KotlinRuntime {
     /** The version of the Kotlin layer. */
-    public const val VERSION: String = "0.1.4"
+    public const val VERSION: String = "0.1.6"
 
     /** The User-Agent language token. */
     public const val LANGUAGE: String = "kotlin"
