@@ -11,14 +11,14 @@ use serde_json::{Value, json};
 
 /// Fixed defaults shared with the emitters.
 pub const PACKAGE_VERSION: &str = "0.1.0";
-pub const CSHARP_RUNTIME: &str = "0.1.3";
-pub const FSHARP_RUNTIME: &str = "0.1.3";
-pub const JAVA_RUNTIME: &str = "0.1.3";
-pub const KOTLIN_RUNTIME: &str = "0.1.3";
-pub const DART_RUNTIME_CONSTRAINT: &str = "^0.1.3";
-pub const RUBY_RUNTIME_REQUIREMENT: &str = "~> 0.1.3";
+pub const CSHARP_RUNTIME: &str = "0.1.4";
+pub const FSHARP_RUNTIME: &str = "0.1.4";
+pub const JAVA_RUNTIME: &str = "0.1.4";
+pub const KOTLIN_RUNTIME: &str = "0.1.4";
+pub const DART_RUNTIME_CONSTRAINT: &str = "^0.1.4";
+pub const RUBY_RUNTIME_REQUIREMENT: &str = "~> 0.1.4";
 /// `@elysra/tungsten-mcp` and `@elysra/tungsten-runtime` ranges of MCP and WebMCP packages.
-pub const NPM_RUNTIME_RANGE: &str = "^0.1.3";
+pub const NPM_RUNTIME_RANGE: &str = "^0.1.4";
 
 /// JSON type a field accepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -339,7 +339,7 @@ pub const MCP_PYTHON: DeclaredOptions = DeclaredOptions {
         d(
             "runtime",
             "`tungsten-mcp` version specifier",
-            ">=0.1.3,<0.2.0",
+            ">=0.1.4,<0.2.0",
         ),
         s(
             "runtime_path",
