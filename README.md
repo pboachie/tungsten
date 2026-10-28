@@ -129,7 +129,7 @@ All conversion routes share these limits: setup inputs are bounded (8 MiB, with 
 
 These targets are implemented in source. Starting with the 0.1.3 source candidate,
 compiler and runtime package versions advance together with the release tag.
-Generated packages default to compatible 0.1.3 runtime floors; an explicit
+Generated packages default to compatible 0.1.4 runtime floors; an explicit
 `runtime` setting remains yours to qualify. The earlier 0.1.2 release has
 independently versioned non-npm runtime sources. Use the matching source checkout
 when a registry artifact is unavailable: source version metadata is not evidence
