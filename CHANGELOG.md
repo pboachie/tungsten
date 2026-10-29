@@ -9,6 +9,143 @@ changes.
 
 ## [Unreleased]
 
+Work merged to `main` after the 0.1.3 release and not shipped in the
+security-only 0.1.4, 0.1.5 and 0.1.6 releases. Items marked experimental may
+change before they are promoted.
+
+### Added
+
+- OpenAPI 3.2 input support with explicit, queryable feature capabilities:
+  the `query` method, `additionalOperations` as custom HTTP methods,
+  `querystring` and cookie parameter styles, reusable media types and
+  `itemSchema` for JSON Lines and event streams (including plain-text
+  streams), discriminator `defaultMapping`, `$self` where it leaves reference
+  resolution unchanged, security requirements that name a scheme by URI, and
+  the OAuth device authorization flow. Constructs that are not compiled are
+  refused or warned about with the TG0140-TG0156 diagnostics.
+- A shared capability catalog and authoritative support matrix. `tungsten
+  capabilities` lists and validates target and input capabilities, and doctor,
+  init, the JSON schema, the language server and support bundles read from the
+  same catalog; the README support matrix is generated from it. Every built-in
+  target declares typed option schemas.
+- A total end-to-end operation deadline across authentication, retries and
+  verification in the TypeScript, Python, Rust, Java, Kotlin, F#, C#, Dart,
+  Ruby and Go runtimes, a `--deadline` flag on generated Rust CLIs, and a
+  per-tool-call deadline on the MCP adapter and WebMCP. Expiry reports
+  `DEADLINE_EXCEEDED`, or `OUTCOME_UNKNOWN` once a request may have been
+  dispatched.
+- Bounded request concurrency, queue admission, shared rate-limit handling, a
+  shared retry budget and an optional cap across scheduler scopes in the
+  TypeScript, Python and Rust runtimes, with `QUEUE_FULL` and `QUEUE_TIMEOUT`
+  outcomes and a bulk-sync example.
+- Optional cross-runtime telemetry observers with bounded, redacted events in
+  the TypeScript, Python and Rust runtimes, plus optional OpenTelemetry
+  adapters and a telemetry gallery recipe. Telemetry is off by default and
+  transmits nothing on its own.
+- Explicit streamed downloads and streamed upload sources with documented
+  replay rules in the TypeScript, Python and Rust runtimes and SDK targets,
+  saving streamed downloads to caller-chosen files with atomic replace and
+  partial-file cleanup. Range and resumable transfers are not supported.
+- Durable checkpoints for resumable read-only page exports, with typed and
+  blocking checkpointed exports in the Rust runtime and `--checkpoint-file`
+  on generated Rust CLIs.
+- Typed incoming-webhook payloads and receiving helpers compiled from OpenAPI
+  webhooks, with framework-free signature verification in the TypeScript,
+  Python and Rust runtimes and a webhook receiver recipe. Webhook payload
+  nesting depth is bounded in every runtime. No framework adapter is included.
+- Login, account switching and logout in generated Rust CLIs, storing
+  sessions in the macOS keychain, the Secret Service, the Windows Credential
+  Locker or an explicit owner-only file, with single-process session refresh.
+  Device authorization and remote token revocation are not supported.
+- Saved mock scenarios with call-count and effect assertions and an
+  integration scenario runner (`tungsten scenario`), supported on Linux,
+  macOS and Windows and in the GitHub Action.
+- `tungsten refresh-import` for reviewed in-place refresh of converted API
+  imports, including Git-acquired sources, recorded importer settings,
+  resumable interrupted applies and language-server explanations for TG0122.
+- Multi-project workspaces: bounded workspace discovery, `--project`
+  selection for check, generate and lock, shared project identity between
+  compilations and the language server, and routing of language-server
+  documents to their owning projects.
+- Reusable configuration profiles with provenance, included-profile depth
+  limits and effective-configuration inspection (`tungsten config`), profile
+  and transport references in manifests, a locked manifest setting, language
+  server completion, hover and watching for profile files, and init presets
+  for an app, a multi-target library and an agent.
+- Offline generation locks that record profile files and generated output
+  identities, locked generation with bundled remote input pins, and portable
+  project bundles (`tungsten bundle export` and `import`) that can carry
+  prepared consumer dependency caches.
+- `tungsten upgrade rehearse` and `apply` for reviewable compiler and runtime
+  upgrades, with staged workspaces and an explicit clean-consumer check.
+  `tungsten update check` classifies newer releases as compatible or
+  requiring migration, and an opt-in cached update notice
+  (`tungsten update notice`) is suppressed in CI, offline, `--json`,
+  non-terminal and protocol modes.
+- Inspectable support bundles (schema v2) with preview, entry removal, opt-in
+  labelled user-supplied attachments, bounded collection time, upgrade
+  rehearsal summaries and `tungsten support-bundle inspect`, exportable on
+  Linux, macOS and Windows.
+- A reusable GitHub Action for validation and generation with multi-project
+  selection, affected-project selection, saved scenario runs and a trust model
+  for external inputs.
+- Language-server quick fixes for diagnostic suggestions and overlay
+  diagnostics, cooperative cancellation of overtaken analysis, reuse of the
+  last check while its inputs are unchanged, and links from diagnostics to
+  their effective configuration source.
+- Experimental `mcp-python` target and Python MCP runtime (stdio, Streamable
+  HTTP, progressive disclosure and streamed results), and experimental
+  Python-backed browser WebMCP dispatch, each with a gallery recipe.
+- Kotlin coroutine and Flow support (opt-in), F# runtime packaging on NuGet as
+  `Tungsten.Runtime.FSharp`, and gated Dart (pub.dev) and JSR publishing routes
+  from 0.2.0.
+- Imported-operation policy enforced in the C#, F#, Dart, Java, Kotlin, Ruby
+  and Go targets, in addition to the existing targets.
+- An Android JNI embedding recipe for Rust SDKs, a restricted agent
+  customization example, and gallery recipes for file transfer, bulk sync,
+  webhooks, mock scenarios and the release video.
+
+### Changed
+
+- Python SDKs and the Python runtime support Python 3.10 and newer, with
+  opt-in `python_version` generation for 3.10 and 3.11, per-version
+  classifiers in generated `pyproject.toml`, and CI on the declared floors and
+  newest lines. Node packages are checked against their own Node.js floors
+  (22, 24 and 26 are qualified; Node 20 is advisory only).
+- String `minLength`, `maxLength` and `pattern` validation counts Unicode code
+  points and reports `PATTERN_UNCHECKED` for patterns that cannot be checked,
+  in the TypeScript, Python, Rust, Go, Java, Ruby, Dart, C# and F# runtimes.
+- Unmergeable `allOf`, mixed enums and by-status bodies get real types in the
+  Dart, C# and F# targets, and multipart per-part `contentType` and
+  fixed-value part headers from OpenAPI `encoding` are honoured in the SDK
+  targets.
+- Generation plans are reused across targets and output is staged with
+  bounded manifests.
+
+### Fixed
+
+- Decode discriminator `defaultMapping` in the Java, Kotlin, Ruby, C#, F#,
+  Dart and Go SDKs.
+- Fix offset and page pagination on Python 3.10 and 3.11 and the isolated
+  Python bootstrap on Windows.
+- Resend the opened request when a Rust event stream reconnects, validate
+  custom HTTP method tokens in the Rust runtime before sending, and report
+  `DEADLINE_EXCEEDED` when the deadline ends a TypeScript queue wait.
+- Stop Java and C# keyed retries once the call deadline has passed, bound the
+  Java OAuth refresh owner by its call deadline, and let callers stop waiting
+  on a shared OAuth token refresh at their deadline or cancellation.
+- Bound no-argument stream `collect()` in TypeScript and Python, and keep the
+  Python runtime clean under pyright strict mode.
+
+### Security
+
+- Require 32-byte caller-supplied confirmation keys.
+- Patch locked MCP runtime HTTP and schema parser advisories, and review the
+  `block-buffer` advisory and the `ctrlc` dependency set.
+- Managed OAuth authorization attempts and fenced token lifecycles in the Rust,
+  browser, Go, Java, Kotlin, C#, F#, Ruby and Dart runtimes, with bounded
+  refresh endpoints and redacted diagnostics.
+
 ## [0.1.6] - 2026-10-28
 
 ### Fixed
