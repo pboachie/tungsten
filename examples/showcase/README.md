@@ -24,14 +24,14 @@ flowchart LR
 ## The six at a glance
 
 <!-- showcase:begin summary -->
-Numbers from tungsten 0.1.5.
+Numbers from tungsten 0.1.6.
 
 | API | Operations | Errors / warnings / infos | MCP listing, discrete (tokens) | MCP listing, progressive (tokens) |
 |---|---:|---:|---:|---:|
 | Stripe | 612 | 0 / 648 / 1,283 | 1,128,102 | 855 |
 | GitHub REST | 1,232 | 0 / 372 / 82 | 1,140,213 | 860 |
 | Twilio | 197 | 0 / 22 / 309 | 207,004 | 865 |
-| OpenAI | 359 | 0 / 99 / 154 | 759,853 | 857 |
+| OpenAI | 359 | 0 / 99 / 157 | 759,853 | 857 |
 | Kubernetes (core/v1) | 248 | 0 / 65 / 0 | 1,507,247 | 863 |
 | Discord | 246 | 0 / 274 / 15 | 410,070 | 858 |
 <!-- showcase:end summary -->
@@ -51,7 +51,7 @@ Payments. The public OpenAPI description. The largest description of the six by 
 `tungsten check apis/stripe`
 
 ```text
-tungsten 0.1.5 · stripe · 1 document · 612 operations (612 implemented, 0 planned, 0 gated)
+tungsten 0.1.6 · stripe · 1 document · 612 operations (612 implemented, 0 planned, 0 gated)
   inputs   ../../.cache/specs/stripe.json (OpenAPI 3.0.0)
   refs     1538 schemas · 2064 edges · 7 cycles (120 recursive) · 0 cross-document
   ir       1 namespace · 233 resources · 612 operations · 9338 types · 2 auth schemes
@@ -279,7 +279,7 @@ Repositories, issues, pull requests, organizations. The api.github.com descripti
 `tungsten check apis/github`
 
 ```text
-tungsten 0.1.5 · github · 1 document · 1232 operations (1232 implemented, 0 planned, 0 gated)
+tungsten 0.1.6 · github · 1 document · 1232 operations (1232 implemented, 0 planned, 0 gated)
   inputs   ../../.cache/specs/github.json (OpenAPI 3.0.3)
   refs     994 schemas · 2591 edges · 0 cycles (0 recursive) · 0 cross-document
   ir       1 namespace · 680 resources · 1232 operations · 2724 types · 0 auth schemes
@@ -523,7 +523,7 @@ Messaging and voice. The core Api v2010 description (Twilio publishes one file p
 `tungsten check apis/twilio`
 
 ```text
-tungsten 0.1.5 · twilio · 1 document · 197 operations (197 implemented, 0 planned, 0 gated)
+tungsten 0.1.6 · twilio · 1 document · 197 operations (197 implemented, 0 planned, 0 gated)
   inputs   ../../.cache/specs/twilio.json (OpenAPI 3.0.1)
   refs     150 schemas · 43 edges · 0 cycles (0 recursive) · 0 cross-document
   ir       1 namespace · 116 resources · 197 operations · 388 types · 1 auth scheme
@@ -732,12 +732,12 @@ Models, assistants, files, batches. The published OpenAPI 3.1 description (YAML)
 `tungsten check apis/openai`
 
 ```text
-tungsten 0.1.5 · openai · 1 document · 359 operations (359 implemented, 0 planned, 0 gated)
+tungsten 0.1.6 · openai · 1 document · 359 operations (359 implemented, 0 planned, 0 gated)
   inputs   ../../.cache/specs/openai.yaml (OpenAPI 3.1.0)
   refs     2048 schemas · 3019 edges · 2 cycles (2 recursive) · 0 cross-document
-  ir       1 namespace · 153 resources · 359 operations · 2690 types · 2 auth schemes
+  ir       1 namespace · 153 resources · 359 operations · 2757 types · 2 auth schemes
   result   ok · 0 errors · 99 warnings
-  codes    TG0111 info ×6 · TG0203 info ×2 · TG0301 warning ×54 · TG0301 info ×97 · TG0302 warning ×19 · TG0303 warning ×1 · TG0303 info ×41 · TG0305 info ×7 · TG0401 warning ×13 · TG0501 warning ×12 · TG0760 info ×1
+  codes    TG0111 info ×6 · TG0203 info ×2 · TG0301 warning ×54 · TG0301 info ×100 · TG0302 warning ×19 · TG0303 warning ×1 · TG0303 info ×41 · TG0305 info ×7 · TG0401 warning ×13 · TG0501 warning ×12 · TG0760 info ×1
 ```
 
 Diagnostics of that run, by code:
@@ -746,7 +746,7 @@ Diagnostics of that run, by code:
 |---|---|---:|---|
 | `TG0111` | info | 6 | path key carries a query string; its pairs are sent on every call |
 | `TG0203` | info | 2 | circular $ref through named types (recursion preserved) |
-| `TG0301` | info | 97 | untagged union: runtime will sniff candidates in order |
+| `TG0301` | info | 100 | untagged union: runtime will sniff candidates in order |
 | `TG0301` | warning | 54 | untagged union: runtime will sniff candidates in order |
 | `TG0302` | warning | 19 | allOf members conflict and could not be flattened |
 | `TG0303` | info | 41 | unsupported or unknown schema keyword ignored |
@@ -756,7 +756,7 @@ Diagnostics of that run, by code:
 | `TG0501` | warning | 12 | pagination inferred by heuristic |
 | `TG0760` | info | 1 | types no operation reaches were not generated (types.prune_unreferenced) |
 
-Safety tiers assigned to the 359 operations: read-only 159 · mutating 149 · destructive 51 · irreversible 0. Generated files: TypeScript 162, Python 164, Rust 170, docs 4.
+Safety tiers assigned to the 359 operations: read-only 159 · mutating 149 · destructive 51 · irreversible 0. Generated files: TypeScript 163, Python 165, Rust 171, docs 4.
 
 #### MCP surface
 
@@ -996,7 +996,7 @@ Pods, services, namespaces. The OpenAPI v3 description of the core/v1 group at r
 `tungsten check apis/kubernetes`
 
 ```text
-tungsten 0.1.5 · kubernetes · 1 document · 248 operations (248 implemented, 0 planned, 0 gated)
+tungsten 0.1.6 · kubernetes · 1 document · 248 operations (248 implemented, 0 planned, 0 gated)
   inputs   ../../.cache/specs/kubernetes.json (OpenAPI 3.0.0)
   refs     258 schemas · 375 edges · 0 cycles (0 recursive) · 0 cross-document
   ir       1 namespace · 78 resources · 248 operations · 258 types · 1 auth scheme
@@ -1223,7 +1223,7 @@ Channels, messages, guilds. Discord labels this description a preview of its v10
 `tungsten check apis/discord`
 
 ```text
-tungsten 0.1.5 · discord · 1 document · 246 operations (246 implemented, 0 planned, 0 gated)
+tungsten 0.1.6 · discord · 1 document · 246 operations (246 implemented, 0 planned, 0 gated)
   inputs   ../../.cache/specs/discord.json (OpenAPI 3.1.0)
   refs     538 schemas · 1272 edges · 1 cycle (1 recursive) · 0 cross-document
   ir       1 namespace · 132 resources · 246 operations · 870 types · 2 auth schemes

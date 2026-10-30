@@ -64,11 +64,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             time.sleep(0.02)  # the work behind one read
-            self._json(200, {"id": record_id, "value": f"record {record_id}"})
         finally:
+            # Release the work slot before the client can observe the response
+            # and start another request under the same quota.
             with _lock:
                 _active -= 1
                 _stats["served"] += 1
+        self._json(200, {"id": record_id, "value": f"record {record_id}"})
 
 
 if __name__ == "__main__":
