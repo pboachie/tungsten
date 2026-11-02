@@ -26,7 +26,7 @@
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
-    "@modelcontextprotocol/sdk": "1.32.1",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "quickjs-emscripten-core": "0.32.0"
   },
   "devDependencies": {
