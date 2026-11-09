@@ -63,10 +63,10 @@ jobs:
         run: python3 .github/scripts/prepare_java_ci_trust.py --major 21
       - name: Verify patched Java runtime and trust roots
         run: python3 .github/scripts/check_java_toolchain.py --major 21
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: 10.0.402
-      - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
+      - uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.336.0
         with:
           ruby-version: "3.3.13"
           bundler-cache: false
