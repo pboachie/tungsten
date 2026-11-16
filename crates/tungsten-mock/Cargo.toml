@@ -37,7 +37,7 @@ tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"] }
 # `pattern` checks for parameters and bodies. JSON Schema patterns are
 # ECMA-262 regexes and real specs use look-around (ZROtext's workflow ids),
 # which the plain regex crate rejects.
-fancy-regex = "0.19"
+fancy-regex = "0.20"
 
 [lints]
 workspace = true
